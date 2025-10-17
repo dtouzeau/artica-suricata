@@ -1,0 +1,5 @@
+package SuricataFirewall
+
+func Build() {
+
+}
