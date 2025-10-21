@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="f7d32cc4-a6ca-48c6-aff5-f67dff96faba" name="192.168.142.130">
+        <fileTransfer rootFolder="/home/dtouzeau/go/src/github.com/dtouzeau" accessType="SFTP" host="192.168.142.130" port="22" sshConfigId="0640669c-11a1-4d92-8bb9-42c754519bf1" sshConfig="dtouzeau@192.168.142.130:22 password">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
