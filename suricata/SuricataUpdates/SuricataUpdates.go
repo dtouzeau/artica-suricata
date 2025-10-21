@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"fmt"
 	"futils"
-	"github.com/rs/zerolog/log"
 	"httpclient"
 	"notifs"
 	"os"
@@ -17,6 +16,8 @@ import (
 	"sockets"
 	"strings"
 	"suricata/SuricataTools"
+
+	"github.com/rs/zerolog/log"
 )
 
 const iprepDir = "/etc/suricata/iprep"
@@ -153,7 +154,7 @@ func Update() error {
 	sockets.SET_INFO_STR("CurrentEmergingRulesVersion", NextVersion)
 
 	final := false
-	AbuseCh(false)
+	_ = AbuseCh(false)
 	if NewEmergingRulesMD5 == CurrentEmergingRulesMD5 {
 		notifs.BuildProgress(40, "{downloading} IP Reputation 1/6", ProgressF)
 		if ipreputationAlienvault() {

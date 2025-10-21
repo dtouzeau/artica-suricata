@@ -3,7 +3,6 @@ package articaunix
 import (
 	"GlobalsValues"
 	"articasys"
-	"articaunix/ArticaunixStats"
 	"bytes"
 	"crypto/md5"
 	"crypto/tls"
@@ -648,7 +647,6 @@ func StatusBuildStats(status StatusIni) {
 
 	if status.Enabled == 0 {
 		futils.DeleteFile(fileprocess)
-		ArticaunixStats.DelRRD(status.ProductCodeName)
 		return
 	}
 
@@ -661,7 +659,6 @@ func StatusBuildStats(status StatusIni) {
 	}
 	NewArray = append(NewArray, fmt.Sprintf("%v", status.MasterMemory))
 	_ = filePutContents(fileprocess, strings.Join(NewArray, ";"))
-	ArticaunixStats.RunRRD(status.ProductCodeName, status.FinalMasterPid)
 
 }
 func filePutContents(filename string, data string) error {

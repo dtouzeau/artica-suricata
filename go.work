@@ -4,7 +4,9 @@ use (
 "sockets"
 "futils"
 	.
+	amount
 	suricata
+	LogForward
 	articasys
 	SqliteConns
 	notifs
@@ -13,4 +15,20 @@ use (
 	CacheMem
 	apostgres
 	csqlite
+	RESTApi
+	suricata/SuricataUpdates
+	suricata/SuricataTools
+	suricata/suricataConfig
+	suricata/SuricataDashboard
+	httpclient
+	ipclass
+	monit
+	logsink
+	afirewall
+	sysctl
+	DNSMem
+	MyNets
+	logrotate
+
+
 )

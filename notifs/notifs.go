@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coreos/go-systemd/v22/journal"
 	"github.com/leeqvip/gophp"
 	"github.com/rs/zerolog/log"
 	"github.com/shirou/gopsutil/v3/host"
@@ -308,20 +309,6 @@ func minutesSinceBoot() int {
 	}
 
 	return int(seconds / 60)
-}
-func SendToJournalCtl(msg string, identifier string) {
-
-	pc, file, line, ok := runtime.Caller(1)
-	funcName := "unknown"
-	if ok {
-		funcName = runtime.FuncForPC(pc).Name()
-	}
-	_ = journal.Send(msg, journal.PriInfo, map[string]string{
-		"SYSLOG_IDENTIFIER": identifier,
-		"CALLER_FUNC":       funcName,
-		"CALLER_LINE":       strconv.Itoa(line),
-		"CALLER_FILE":       file,
-	})
 }
 
 func IsProductionTime() bool {

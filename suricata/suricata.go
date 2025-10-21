@@ -83,7 +83,7 @@ func Install() {
 	notifs.BuildProgress(60, "{install_service}", ProgressF)
 	notifs.BuildProgress(80, "{install_service}", ProgressF)
 	CreateMonitService()
-	SyslogConf()
+	
 	go func() {
 		err := SuricataUpdates.Update()
 		if err != nil {
@@ -100,26 +100,7 @@ func Install() {
 	notifs.BuildProgress(100, "{install_service} {success}", ProgressF)
 
 }
-func SyslogConf() {
-	var f []string
-	tfile := SyslogConfPath
-	conf := logsink.LocalFileConf{File: "/var/log/snmp.syslog.log", AsyncWriting: true}
-	f = append(f, "if  ($programname =='snmpd') then {")
-	f = append(f, logsink.BuildRemoteSyslogs("snmpd", "snmpd"))
-	f = append(f, logsink.BuildLocalFilelog(conf))
-	f = append(f, "	& stop")
-	f = append(f, "}")
 
-	md51 := futils.MD5File(tfile)
-	_ = futils.FilePutContents(tfile, strings.Join(f, "\n"))
-	md52 := futils.MD5File(tfile)
-	if md51 == md52 {
-		return
-	}
-	log.Info().Msgf("%v Restarting syslog service", futils.GetCalleRuntime())
-	go logsink.Restart()
-
-}
 func CreateMonitService() {
 	var f []string
 

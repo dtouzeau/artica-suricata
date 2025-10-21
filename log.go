@@ -54,7 +54,7 @@ func LogRotate() {
 }
 func FileSizeBytes(filePath string) int64 {
 
-	if !fileExists(filePath) {
+	if !futils.FileExists(filePath) {
 		return 0
 	}
 
@@ -71,7 +71,7 @@ func FileSizeBytes(filePath string) int64 {
 
 func FileSizeMB(filePath string) int64 {
 
-	if !fileExists(filePath) {
+	if !futils.FileExists(filePath) {
 		return 0
 	}
 

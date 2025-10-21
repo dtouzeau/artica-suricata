@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"futils"
+
 	"github.com/patrickmn/go-cache"
 	"github.com/rs/zerolog/log"
-	"license"
+
 	"os"
 	"regexp"
 	"sockets"
@@ -342,9 +343,6 @@ func EveJsonPurge() {
 	if SuricataPurge == 0 {
 		SuricataPurge = 15
 	}
-	if !license.IsCorpLicense() {
-		SuricataPurge = 2
-	}
 
 	Query := fmt.Sprintf("DELETE FROM suricata_events WHERE zdate < NOW() - INTERVAL '%d days'", SuricataPurge)
 	db, err := apostgres.SQLConnect()
@@ -354,9 +352,7 @@ func EveJsonPurge() {
 	}
 
 	defer func(db *sql.DB) {
-		err := db.Close()
-		if err != nil {
-		}
+		_ = db.Close()
 	}(db)
 
 	_, err = db.Exec(Query)

@@ -1,16 +1,22 @@
 package main
 
 import (
+	"LogForward"
+	"RESTApi"
 	"flag"
 	"fmt"
 	"futils"
-	"github.com/robfig/cron/v3"
-	"github.com/rs/zerolog/log"
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"sockets"
+	"suricata"
+	"suricata/suricataConfig"
 	"syscall"
 	"time"
+
+	"github.com/robfig/cron/v3"
+	"github.com/rs/zerolog/log"
 )
 
 const PanicFile = "/etc/artica-postfix/artica-suricata.panic"
@@ -19,6 +25,17 @@ const PidFile = "/run/artica-suricata.pid"
 var MainCron *cron.Cron
 var GoInDebug = flag.Bool("debug", false, "Run Debug mode")
 var Getversion = flag.Bool("version", false, "Get version")
+var cmdstopsuricata = flag.Bool("stop-ids", false, "Stop the IDS service")
+var cmdstartsuricata = flag.Bool("start-ids", false, "Start the IDS service")
+var cmdrestartsuricata = flag.Bool("restart-ids", false, "Restart the IDS service")
+var cmdreconfiguresuricata = flag.Bool("reconfigure-ids", false, "Reconfigure the IDS service")
+var cmdinstallsuricata = flag.Bool("install-ids", false, "Install the IDS service")
+var cmduninstallsuricata = flag.Bool("uninstall-ids", false, "Uninstall the IDS service")
+var cmdstatussuricata = flag.Bool("status-ids", false, "Status of the IDS service")
+var cmdFixDuplicatesssuricata = flag.Bool("duplicates-ids", false, "Fix duplicate rules in IDS")
+var cmdPFRing = flag.Bool("pf-ring", false, "Verify PF RING Configration for IDS")
+var CMDSuricataUpdates = flag.Bool("suricata-updates", false, "Updates Suricata")
+var CMDSuricataSock = flag.String("suricata-sock", "", "Send command to suricata socket")
 
 func main() {
 
@@ -34,6 +51,7 @@ func main() {
 	flag.Parse()
 	if *Getversion {
 		fmt.Println("Version:", version)
+		_ = suricata.GetVersion()
 		os.Exit(0)
 	}
 	_, err := time.LoadLocation(futils.GetTimeZone())
@@ -63,9 +81,27 @@ func main() {
 	if err != nil {
 		log.Error().Msg(fmt.Sprintf("%v Error Getting Rlimit %s", futils.GetCalleRuntime(), err))
 	}
-
+	go func() {
+		_ = suricata.GetVersion()
+		suricata.LoadClassifications(false)
+	}()
 	MainCron = cron.New()
+	go LogForward.Start()
+	go RESTApi.Start()
 	_, _ = MainCron.AddFunc("*/5 * * * *", Each5Minutes)
+	_, _ = MainCron.AddFunc("*/15 * * * *", Each15Minutes)
+	_, _ = MainCron.AddFunc("*/10 * * * *", Each10Minutes)
+	_, err = MainCron.AddFunc("0 */12 * * *", Each12Hours)
+	SquidRotateOnlySchedule := sockets.GET_INFO_INT("SquidRotateOnlySchedule")
+	if SquidRotateOnlySchedule == 1 {
+		LogRotateH := sockets.GET_INFO_STR("LogRotateH")
+		LogRotateM := sockets.GET_INFO_STR("LogRotateM")
+		zpattern := fmt.Sprintf("%d %d * * *", LogRotateM, LogRotateH)
+		_, err = MainCron.AddFunc(zpattern, EachRotation)
+		if err != nil {
+			log.Err(err).Msg(fmt.Sprintf("Unable to create cron tasks for EachRotation (%v) %v", zpattern, err.Error()))
+		}
+	}
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2, syscall.SIGTERM)
@@ -87,7 +123,7 @@ func main() {
 		case <-KillChan:
 			log.Warn().Msgf("[STOP]: %v Received KILL signal Terminate process", futils.GetCalleRuntime())
 			log.Warn().Msgf("%v Dump Database...", futils.GetCalleRuntime())
-
+			RESTApi.Stop()
 			MainCron.Stop()
 			log.Warn().Msgf("%v Dump memory...", futils.GetCalleRuntime())
 			log.Warn().Msgf("%v Cleaning...", futils.GetCalleRuntime())
@@ -105,6 +141,9 @@ func main() {
 			initZerolog()
 			MainCron.Stop()
 			MainCron.Start()
+			suricataConfig.CheckTables()
+			suricataConfig.PatchTables()
+			_ = suricata.GetVersion()
 
 		}
 
