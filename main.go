@@ -85,9 +85,13 @@ func main() {
 		_ = suricata.GetVersion()
 		suricata.LoadClassifications(false)
 	}()
+	log.Info().Msgf("%v Starting version [%v]", futils.GetCalleRuntime(), version)
+
 	MainCron = cron.New()
 	go LogForward.Start()
 	go RESTApi.Start()
+	go suricata.CheckStartup()
+	go suricataConfig.PatchTables()
 	_, _ = MainCron.AddFunc("*/5 * * * *", Each5Minutes)
 	_, _ = MainCron.AddFunc("*/15 * * * *", Each15Minutes)
 	_, _ = MainCron.AddFunc("*/10 * * * *", Each10Minutes)
@@ -119,6 +123,7 @@ func main() {
 		select {
 
 		case <-time.After(time.Second * 10):
+			futils.Chmod("/run/suricata-service.sock", 0777)
 
 		case <-KillChan:
 			log.Warn().Msgf("[STOP]: %v Received KILL signal Terminate process", futils.GetCalleRuntime())

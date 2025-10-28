@@ -3,6 +3,7 @@ package suricata
 import (
 	"CacheMem"
 	"GlobalsValues"
+	"SuricataService"
 	"apostgres"
 	"articaunix"
 	"database/sql"
@@ -29,7 +30,7 @@ const SyslogConfPath = "/etc/rsyslog.d/00_suricata.conf"
 const MonitFile = "/etc/monit/conf.d/APP_SURICATA.monitrc"
 const ArticaBinary = GlobalsValues.ArticaBinary
 const MonitName = "APP_SURICATA"
-const PidPath = "/run/suricata/suricata.pid"
+const PidPath = SuricataService.PidPath
 const ProgressF = "suricata.progress"
 const MainBinary = "/usr/bin/suricata"
 const ServiceName = "IDS Daemon"
@@ -83,24 +84,34 @@ func Install() {
 	notifs.BuildProgress(60, "{install_service}", ProgressF)
 	notifs.BuildProgress(80, "{install_service}", ProgressF)
 	CreateMonitService()
-	
-	go func() {
-		err := SuricataUpdates.Update()
-		if err != nil {
 
-		}
+	go func() {
+		_ = SuricataUpdates.Update()
 	}()
 	//exec.openldap.upgrade.php --cve
 	go func() {
-		err := Start()
-		if err != nil {
+		_ = Start()
 
-		}
 	}()
 	notifs.BuildProgress(100, "{install_service} {success}", ProgressF)
 
 }
-
+func CheckStartup() {
+	Enabled := sockets.GET_INFO_INT(TokenEnabled)
+	if Enabled == 0 {
+		Uninstall()
+		return
+	}
+	pid := GetPID()
+	if futils.ProcessExists(pid) {
+		return
+	}
+	log.Warn().Msgf("%v Suricata not running, Start it..", futils.GetCalleRuntime())
+	err := Start()
+	if err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+	}
+}
 func CreateMonitService() {
 	var f []string
 
@@ -131,123 +142,16 @@ func Start() error {
 		Uninstall()
 		return fmt.Errorf("disabled feature")
 	}
-	futils.CreateDir("/run/suricata")
-	futils.CreateDir("/var/log/suricata")
-	futils.Chmod("/usr/share/artica-postfix/bin/sidrule", 0755)
-	notifs.BuildProgress(51, "{configuring} ( CheckPFRing )", ProgressF)
-	PFRing := CheckPFRing()
-	err := suricataConfig.SuricataConfig(PFRing.Enable)
+
+	CheckPFRing()
+	err := suricataConfig.SuricataConfig()
 	if err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
 		return err
 	}
-	notifs.BuildProgress(52, "DepMod...", ProgressF)
-	SuricataDepmod := sockets.GET_INFO_INT("SuricataDepmod")
-
-	if !futils.FileExists("/etc/ld.so.conf.d/local.lib.conf") {
-		_ = futils.FilePutContents("/etc/ld.so.conf.d/local.lib.conf", "/usr/local/lib\n")
-		_ = futils.RunLdconfig("")
-	}
-
-	if SuricataDepmod == 0 {
-		err := futils.RunDepmod()
-		if err != nil {
-			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		}
-		sockets.SET_INFO_INT("SuricataDepmod", 1)
-	}
-	notifs.BuildProgress(55, "{configuring} PF_RING", ProgressF)
-
-	log.Debug().Msgf("%v Starting suricata PFRing=%d", futils.GetCalleRuntime(), PFRing.Enable)
-	if PFRing.Enable == 1 {
-		if !futils.FileExists("/etc/modprobe.d/pfring.conf") {
-			ldconfig := futils.FindProgram("ldconfig")
-			_, _ = futils.ExecuteShell(ldconfig)
-		}
-		_ = futils.FilePutContents("/etc/modprobe.d/pfring.conf", "options pf_ring transparent_mode=0 min_num_slots=32768 enable_tx_capture=1\n")
-		modprobe := futils.FindProgram("modprobe")
-		_, _ = futils.ExecuteShell(fmt.Sprintf("%v pf_ring transparent_mode=0 min_num_slots=32768 enable_tx_capture=1", modprobe))
-		for i := 0; i < 5; i++ {
-			if futils.IsModulesLoaded("pf_ring") {
-				break
-			}
-			_, _ = futils.ExecuteShell(fmt.Sprintf("%v pf_ring transparent_mode=0 min_num_slots=32768 enable_tx_capture=1", modprobe))
-			time.Sleep(1 * time.Second)
-		}
-
-	}
-	if PFRing.Enable == 0 {
-		if futils.IsModulesLoaded("pf_ring") {
-			rmmod := futils.FindProgram("rmmod")
-			_, _ = futils.ExecuteShell(fmt.Sprintf("%v pf_ring", rmmod))
-			if futils.FileExists("/etc/modprobe.d/pfring.conf") {
-				futils.DeleteFile("/etc/modprobe.d/pfring.conf")
-			}
-		}
-	}
-	notifs.BuildProgress(56, "{configuring} ethtool", ProgressF)
-	removeOldSuricataLogs()
-	ethtool := futils.FindProgram("ethtool")
-
-	if futils.FileExists(ethtool) {
-		SuricataInterface := sockets.GET_INFO_STR("SuricataInterface")
-		if SuricataInterface == "" {
-			SuricataInterface = "eth0"
-		}
-		_, _ = futils.ExecuteShell(fmt.Sprintf("%v -K %v gro off", ethtool, SuricataInterface))
-		_, _ = futils.ExecuteShell(fmt.Sprintf("%v -K %v lro off", ethtool, SuricataInterface))
-	}
-	setcapBin := futils.FindProgram("setcap")
-
-	_, _ = futils.ExecuteShell(fmt.Sprintf("%v cap_net_raw,cap_net_admin=eip %v", setcapBin, MainBinary))
-
-	cmd := buildSuricataCommand(PFRing.Enable)
-	futils.DeleteFile("/run/suricata/suricata.pid")
-	log.Debug().Msgf("%v [%v]", futils.GetCalleRuntime(), cmd)
-	notifs.BuildProgress(57, "{starting}...", ProgressF)
-	err, out := futils.ExecuteShell(cmd)
-	out = strings.TrimSpace(out)
-	log.Debug().Msgf("%v [%v]", futils.GetCalleRuntime(), out)
-
-	if err != nil {
-		log.Error().Msgf("%v Failed to start %v [%v]", futils.GetCalleRuntime(), cmd, err)
-		return fmt.Errorf("unable to start %v (%v): [%v]", ServiceName, cmd, out)
-	}
-
-	c := 57
-	for i := 0; i < 5; i++ {
-		c++
-		notifs.BuildProgress(c, fmt.Sprintf("{starting}...%d/5", i), ProgressF)
-		time.Sleep(Duration)
-		pid := GetPID()
-		if futils.ProcessExists(pid) {
-			log.Info().Msgf("%v Starting...%v [SUCCESS]", futils.GetCalleRuntime(), ServiceName)
-			return nil
-		}
-	}
-
-	return fmt.Errorf("unable to start the %v (%v): [%v]", ServiceName, err, out)
-
+	return SuricataService.Start()
 }
-func buildSuricataCommand(SuricataPfRing int) string {
-	masterbin := futils.FindProgram("suricata")
-	var cm []string
 
-	cm = append(cm, masterbin)
-	cm = append(cm, "--pidfile", "/run/suricata/suricata.pid")
-
-	if SuricataPfRing == 1 {
-		cm = append(cm, "--pfring")
-		cm = append(cm, "--pfring-cluster-id=99")
-		cm = append(cm, "--pfring-cluster-type=cluster_flow")
-	} else {
-		cm = append(cm, "--af-packet")
-	}
-
-	cm = append(cm, "-D")
-	command := strings.Join(cm, " ")
-
-	return command
-}
 func removeOldSuricataLogs() {
 	dirPath := "/var/log/suricata"
 	files, err := os.ReadDir(dirPath)
@@ -437,7 +341,6 @@ func UnloadPFring() bool {
 	return true
 
 }
-
 func GetPID() int {
 	return SuricataTools.GetPID()
 }
@@ -622,8 +525,8 @@ func Reconfigure() {
 	notifs.BuildProgress(30, "{reconfiguring}", ProgressF)
 	md51 := futils.MD5File("/etc/suricata/suricata.yaml")
 	notifs.BuildProgress(50, "{reconfiguring}", ProgressF)
-	PFRing := CheckPFRing()
-	err := suricataConfig.SuricataConfig(PFRing.Enable)
+	CheckPFRing()
+	err := suricataConfig.SuricataConfig()
 	if err != nil {
 		notifs.BuildProgress(110, err.Error(), ProgressF)
 		return

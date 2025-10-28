@@ -1,6 +1,7 @@
 package main
 
 import (
+	"LogForward"
 	"logrotate"
 	"suricata"
 	"suricata/SuricataDashboard"
@@ -9,7 +10,7 @@ import (
 )
 
 func Each5Minutes() {
-
+	LogForward.ParseQueueFailed()
 }
 func Each15Minutes() {
 	suricataConfig.SuricataDashboard()
@@ -18,6 +19,7 @@ func Each15Minutes() {
 func Each10Minutes() {
 	SuricataUpdates.Schedule()
 	SuricataDashboard.CountOfSuricata()
+
 }
 func Each12Hours() {
 	suricata.EveJsonPurge()

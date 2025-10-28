@@ -1,21 +1,27 @@
 package LogForward
 
 import (
+	"apostgres"
 	"bufio"
 	"context"
+	"crypto/md5"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"futils"
-	"github.com/rs/zerolog/log"
 	"io"
 	"net"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 /* =========================
@@ -32,15 +38,16 @@ const (
 	// Metrics print interval
 	MetricsInterval = 10 * time.Second
 
+	// Scan interval for dumping the in-memory EveEvent map
+	ScanInterval = 20 * time.Second
+
 	// How long to wait when queue is full before dropping a line
 	QueueBlockTimeout = 500 * time.Millisecond
+	QueueFailed       = "/home/suricata/queue-failed"
 )
 
 var (
-	// Number of worker goroutines to parse & handle events
-	Workers = runtime.GOMAXPROCS(0)
-
-	// Bounded queue size for pending lines
+	Workers   = runtime.GOMAXPROCS(0)
 	QueueSize = 10_000
 )
 
@@ -51,6 +58,16 @@ var (
 type job struct {
 	line []byte
 	ts   time.Time
+}
+type HTTPInfo struct {
+	Hostname        string `json:"hostname"`
+	URL             string `json:"url"`
+	HTTPUserAgent   string `json:"http_user_agent"`
+	HTTPContentType string `json:"http_content_type"`
+	HTTPMethod      string `json:"http_method"`
+	Protocol        string `json:"protocol"` // e.g. "HTTP/1.1"
+	Status          int    `json:"status"`   // 404
+	Length          int    `json:"length"`   // 196
 }
 
 type metrics struct {
@@ -92,12 +109,15 @@ type EveEvent struct {
 	TxID         *uint64         `json:"tx_id,omitempty"`
 	CommunityID  *string         `json:"community_id,omitempty"`
 	Alert        *EveAlert       `json:"alert,omitempty"`
-	HTTP         json.RawMessage `json:"http,omitempty"`
+	HTTP         *HTTPInfo       `json:"http,omitempty"`
 	TLS          json.RawMessage `json:"tls,omitempty"`
 	DNS          json.RawMessage `json:"dns,omitempty"`
 	Flow         json.RawMessage `json:"flow,omitempty"`
 	UnhandledRaw json.RawMessage `json:"-"`
+	Count        int             `json:"Count"`
+	ProxyName    string          `json:"ProxyName"`
 }
+
 type EveAlert struct {
 	Signature   string   `json:"signature"`
 	SignatureID int      `json:"signature_id"`
@@ -110,6 +130,135 @@ type EveAlert struct {
 	Rule        string   `json:"rule,omitempty"`
 }
 
+/* =========================
+   Event store (MD5 → *EveEvent) + scanner
+   ========================= */
+
+var eventStore = struct {
+	mu sync.Mutex
+	m  map[string]*EveEvent
+}{m: make(map[string]*EveEvent)}
+
+// eventHash returns md5 hex of the JSON-marshaled event.
+func eventHash(ev *EveEvent) (string, []byte, error) {
+	ev.Timestamp = ""
+	ev.Count = 0
+	b, err := json.Marshal(ev)
+	if err != nil {
+		return "", nil, err
+	}
+	sum := md5.Sum(b)
+	return hex.EncodeToString(sum[:]), b, nil
+}
+
+// LogAllEventsAndClear logs every EveEvent currently in the map.
+// If clear==true, it empties the map afterwards.
+func LogAllEventsAndClear(clear bool) {
+	eventStore.mu.Lock()
+	ProxyName := futils.LocalFQDN()
+
+	db, err := apostgres.SQLConnect()
+	if err != nil {
+		log.Error().Msgf("%v Error connecting to database: %v", futils.GetCalleRuntime(), err)
+		return
+	}
+	defer func(db *sql.DB) {
+		_ = db.Close()
+	}(db)
+
+	snap := make(map[string]*EveEvent, len(eventStore.m))
+	for k, v := range eventStore.m {
+		snap[k] = v
+	}
+	if clear {
+		eventStore.m = make(map[string]*EveEvent)
+	}
+	eventStore.mu.Unlock()
+
+	// Emit logs outside the lock
+	for k, ev := range snap {
+		b, err := json.Marshal(ev)
+		if err != nil {
+			log.Warn().Msgf("marshal event %s: %v", k, err)
+			continue
+		}
+		ev.ProxyName = ProxyName
+		log.Info().Msgf("EVE[%s]: %s", k, string(b))
+	}
+}
+func injectToDB(db *sql.DB, m *EveEvent) bool {
+
+	_, err := db.Exec(`INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES 
+		($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
+		m.Timestamp, m.SrcIP, m.DstIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
+	if err == nil {
+		return true
+	}
+	log.Error().Msgf("%v Error inserting into database: %v", futils.GetCalleRuntime(), err)
+
+	b, err := json.Marshal(m)
+	if err != nil {
+		log.Error().Msgf("%v Error marshaling event: %v", futils.GetCalleRuntime(), err)
+		return false
+	}
+	// save into disk in order to return back later ( see cron function )
+	sFname := futils.Md5String(string(b))
+	fname := "/home/suricata/queue-failed/" + sFname + ".json"
+	if futils.FileExists(fname) {
+		return false
+	}
+	futils.CreateDir(QueueFailed)
+	err = futils.FilePutContents(fname, string(b))
+	if err != nil {
+		log.Error().Msgf("%v Error writing to file: %v", futils.GetCalleRuntime(), err)
+		return false
+	}
+	return false
+
+}
+
+func ParseQueueFailed() {
+
+	db, err := apostgres.SQLConnect()
+	if err != nil {
+		log.Error().Msgf("%v Error connecting to database: %v", futils.GetCalleRuntime(), err)
+		return
+	}
+	defer func(db *sql.DB) {
+		_ = db.Close()
+	}(db)
+
+	if !futils.IsDirDirectory(QueueFailed) {
+		return
+	}
+	files := futils.DirectoryScan(QueueFailed)
+	for _, sfile := range files {
+		fullPath := QueueFailed + "/" + sfile
+		if !strings.HasSuffix(sfile, ".json") {
+			futils.DeleteFile(fullPath)
+			continue
+		}
+
+		MinutesLive := futils.FileTimeMin(fullPath)
+		// if TTL > 240 -> aborting completely
+		if MinutesLive > 240 {
+			futils.DeleteFile(fullPath)
+			continue
+		}
+		var ev *EveEvent
+		data := futils.FileGetContents(fullPath)
+		err := json.Unmarshal([]byte(data), &ev)
+		if err != nil {
+			futils.DeleteFile(fullPath)
+			log.Error().Msgf("%v Error unmarshaling file: %v", futils.GetCalleRuntime(), err)
+			continue
+		}
+		if injectToDB(db, ev) {
+			futils.DeleteFile(fullPath)
+		}
+	}
+
+}
 func parseLine(b []byte) (*EveEvent, error) {
 	var ev EveEvent
 	if err := json.Unmarshal(b, &ev); err != nil {
@@ -118,31 +267,46 @@ func parseLine(b []byte) (*EveEvent, error) {
 	return &ev, nil
 }
 
-// handleEvent is your hook: DB write, Redis, ipset, logs, etc.
+// handleEvent stores the event in the MD5-keyed map and logs compact info for alerts.
 func handleEvent(ev *EveEvent) {
-	// Example: compact log for alerts only
-	if ev.EventType == "alert" && ev.Alert != nil {
-		log.Printf(`ALERT sig="%s" sid=%d sev=%d src=%s dst=%s`,
-			ev.Alert.Signature, ev.Alert.SignatureID, ev.Alert.Severity, ev.SrcIP, ev.DstIP)
+	Count := ev.Count
+	h, _, err := eventHash(ev)
+	if err != nil {
+		log.Warn().Msgf("event hash error: %v", err)
+		return
 	}
+
+	if len(ev.EventType) == 0 {
+		log.Warn().Msgf("event type missing: %v", err)
+		return
+	}
+
+	eventStore.mu.Lock()
+	ev.Timestamp = futils.TimeStampToString()
+	if _, exists := eventStore.m[h]; exists {
+		eventStore.m[h].Count += Count
+		eventStore.mu.Unlock()
+		return
+	}
+	eventStore.m[h] = ev
+	eventStore.mu.Unlock()
+
 }
-
-/* =========================
-   Main
-   ========================= */
-
 func Start() {
 	// Prepare listener socket (remove stale, bind, chmod)
 	_ = os.Remove(InSockPath)
+
 	ln, err := net.Listen("unix", InSockPath)
 	if err != nil {
 		log.Error().Msgf("%v listen(%s): %v", futils.GetCalleRuntime(), InSockPath, err)
+		return // critical: don't continue with a nil listener
 	}
-	defer func(ln net.Listener) {
-		_ = ln.Close()
+	defer ln.Close()
 
-	}(ln)
-	_ = os.Chmod(InSockPath, 0660)
+	if err := os.Chmod(InSockPath, 0660); err != nil {
+		log.Error().Msgf("%v chmod(%s): %v", futils.GetCalleRuntime(), InSockPath, err)
+		// Optional: return if perms are critical for Suricata to connect
+	}
 
 	// Graceful shutdown via SIGINT/SIGTERM
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -192,6 +356,20 @@ func Start() {
 		}
 	}()
 
+	// Periodic scan-and-log of all stored events every 20s (no clear)
+	go func() {
+		t := time.NewTicker(ScanInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				LogAllEventsAndClear(false) // set to true to empty the map after logging
+			}
+		}
+	}()
+
 	log.Info().Msgf("suri-forwarder-parse: listening on %s; workers=%d queue=%d", InSockPath, Workers, QueueSize)
 
 	// Accept loop
@@ -199,10 +377,11 @@ func Start() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
+				// listener closed or context canceled → exit loop
 				if errors.Is(err, net.ErrClosed) || ctx.Err() != nil {
 					return
 				}
-				log.Info().Msgf("accept: %v", err)
+				log.Warn().Msgf("accept: %v", err)
 				continue
 			}
 			m.incConns()
@@ -212,7 +391,7 @@ func Start() {
 					m.decConns()
 				}()
 				if err := handleConn(ctx, c, queue, &m); err != nil && ctx.Err() == nil {
-					log.Info().Msgf("%v conn handler: %v", futils.GetCalleRuntime(), err)
+					log.Warn().Msgf("%v conn handler: %v", futils.GetCalleRuntime(), err)
 				}
 			}(conn)
 		}
@@ -225,9 +404,8 @@ func Start() {
 	time.Sleep(300 * time.Millisecond) // let in-flight scanner writes finish
 	close(queue)
 	wg.Wait()
-	log.Printf("bye.")
+	log.Info().Msg("bye.")
 }
-
 func handleConn(ctx context.Context, c net.Conn, queue chan<- job, m *metrics) error {
 	sc := bufio.NewScanner(c)
 	buf := make([]byte, 0, 256*1024) // initial buffer

@@ -1,8 +1,6 @@
 go 1.25
 
 use (
-"sockets"
-"futils"
 	.
 	amount
 	suricata
@@ -20,6 +18,7 @@ use (
 	suricata/SuricataTools
 	suricata/suricataConfig
 	suricata/SuricataDashboard
+	surisock
 	httpclient
 	ipclass
 	monit
@@ -29,6 +28,10 @@ use (
 	DNSMem
 	MyNets
 	logrotate
-
+	sockets
+	futils
+	SuricataService
+	BPFfilter
+	PFRingIfaces
 
 )

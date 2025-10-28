@@ -1,23 +1,31 @@
 package SuricataTools
 
 import (
+	"SuricataService"
 	"apostgres"
 	"bufio"
+	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"futils"
-	"github.com/rs/zerolog/log"
 	"net"
 	"notifs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"surisock"
+	"time"
+
+	"github.com/rs/zerolog/log"
 )
 
 const ProgressF = "suricata.progress"
-const PidPath = "/run/suricata/suricata.pid"
+const PidPath = SuricataService.PidPath
 
 var RegexLocation = regexp.MustCompile(`^(.+?)\s+\(Line:\s+([0-9]+)\)`)
 
@@ -156,8 +164,21 @@ func Reload() {
 	}
 
 	notifs.BuildProgress(30, "{reloading}", ProgressF)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	futils.KillReloadProcess(pid)
+	// Reload full YAML + rules:
+	if Reply, err := surisock.RulesetReloadNonBlocking(ctx); err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		notifs.BuildProgress(110, "{reloading} {failed} "+err.Error(), ProgressF)
+		if Reply != nil {
+			if Reply.Return != "OK" {
+				log.Error().Msgf("%v %v", futils.GetCalleRuntime(), Reply.Message)
+			}
+		}
+		return
+	}
+
 	notifs.BuildProgress(100, "{reloading} {success}", ProgressF)
 }
 func GetPID() int {
@@ -211,17 +232,49 @@ func GetDisabledSignatures() (error, []string) {
 
 	return nil, suppressRules
 }
+func dumpCounters() (string, string, error) {
+	const bin = "/usr/bin/suricatasc"
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, bin, "-c", "dump-counters", "/run/suricata/suricata.sock")
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	cmd.Env = futils.ExecEnv()
+	err := cmd.Run()
+
+	// Distinguish timeout explicitly
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return stdout.String(), stderr.String(),
+			fmt.Errorf("suricatasc timed out after 20s: %w", context.DeadlineExceeded)
+	}
+
+	// Non-zero exit or other exec errors
+	if err != nil {
+		return stdout.String(), stderr.String(),
+			fmt.Errorf("suricatasc failed: %w (stderr: %s)", err, stderr.String())
+	}
+
+	return stdout.String(), stderr.String(), nil
+}
 
 func DumpStats() (SuricataStats, string) {
-
 	var Res SuricataStats
-	suricatasc := futils.FindProgram("suricatasc")
-	if suricatasc == "" {
-		return Res, ""
-	}
-	err, out := futils.ExecuteShell(fmt.Sprintf("%v -c dump-counters /run/suricata/suricata.sock", suricatasc))
+	out, serr, err := dumpCounters()
 	if err != nil {
-		log.Error().Msgf("%v %v [%v]", futils.GetCalleRuntime(), err.Error(), out)
+		log.Error().Msgf("%v %v [%v]/[%v]", futils.GetCalleRuntime(), err.Error(), out, serr)
+		if strings.Contains(serr, "Connection refused") {
+			go func() {
+				err := SuricataService.Start()
+				if err != nil {
+					log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+				}
+			}()
+			return Res, ""
+		}
+
 		return Res, ""
 	}
 	err = json.Unmarshal([]byte(out), &Res)
@@ -240,10 +293,7 @@ func UnixCommand(order string) (error, string) {
 		os.Exit(1)
 	}
 	defer func(conn net.Conn) {
-		err := conn.Close()
-		if err != nil {
-
-		}
+		_ = conn.Close()
 	}(conn)
 	command := fmt.Sprintf(`{"command": "%v"}`, order)
 	log.Debug().Msgf("%v Command: %v", futils.GetCalleRuntime(), command)

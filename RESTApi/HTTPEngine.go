@@ -4,17 +4,18 @@ import (
 	"bufio"
 	"fmt"
 	"futils"
+	"os"
+	"time"
+
 	"github.com/fasthttp/router"
 	"github.com/rs/zerolog/log"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/pprofhandler"
-	"os"
-	"time"
 )
 
 var HTTPlocalServer *fasthttp.Server
 
-const Socket = "/usr/share/artica-postfix/bin/run/suricata-service.sock"
+const Socket = "/run/suricata-service.sock"
 
 func Start() {
 
@@ -96,9 +97,12 @@ func buildRouter() *router.Router {
 	r.GET("/suricata/reload", logRequest(restSuricataReload))
 	r.GET("/suricata/sid/disable/{sid}", logRequest(restSuricataDisableSid))
 	r.GET("/suricata/sid/enable/{sid}", logRequest(restSuricataEnableSid))
+	r.GET("/iface/state/{iface}", logRequest(IfaceState))
+	r.GET("/iface/list", logRequest(IfaceList))
 	r.GET("/suricata/update", logRequest(restSuricataUpdate))
 	r.GET("/suricata/pfring", logRequest(restSuricataPfRing))
 	r.GET("/suricata/stats", logRequest(restSuricataStats))
+	r.GET("/suricata/pfring-plugin", logRequest(restSuricataPfRingPluging))
 	r.GET("/debug/pprof/{profile:*}", logRequest(pprofhandler.PprofHandler))
 
 	return r

@@ -1,7 +1,8 @@
 package suricataConfig
 
 import (
-	"MyNets"
+	"BPFfilter"
+	"PFRingIfaces"
 	"SqliteConns"
 	"apostgres"
 	"bufio"
@@ -27,7 +28,7 @@ import (
 
 var ClassificationsRegex = regexp.MustCompile(`^config classification:\s+(.+?),(.+?),([0-9]+)`)
 
-func SuricataConfig(suricataPfRing int) error {
+func SuricataConfig() error {
 
 	if futils.IsDirDirectory("/etc/suricata/suricata") {
 		cp := futils.FindProgram("cp")
@@ -37,29 +38,17 @@ func SuricataConfig(suricataPfRing int) error {
 
 	futils.CreateDir("/etc/suricata/iprep")
 	futils.CreateDir("/etc/suricata/rules")
-	surcataLogDNS := sockets.GET_INFO_INT("SurcataLogDNS")
-	surcataLogSSH := sockets.GET_INFO_INT("SurcataLogSSH")
-	surcataLogHTTP := sockets.GET_INFO_INT("SurcataLogHTTP")
-	surcataLogTLS := sockets.GET_INFO_INT("SurcataLogTLS")
-	surcataLogFiles := sockets.GET_INFO_INT("SuricataLogFiles")
-	sockets.SET_INFO_INT("SuricataPfRing", int64(suricataPfRing))
-
-	homeNet := MyNets.LocalNets()
-
-	trustedNet := MyNets.TrustedNets()
-	trustedNet["127.0.0.1"] = true
-
-	if len(homeNet) == 0 {
-		homeNet["192.168.0.0/16"] = true
-		homeNet["10.0.0.0/8"] = true
-		homeNet["172.16.0.0/12"] = true
-	}
 
 	// Constructing the configuration file contents
 	var f []string
 	f = append(f, "%YAML 1.1", "---")
-	f = append(f, "max-pending-packets: 2048", "runmode: workers", "host-mode: sniffer-only", "default-log-dir: /var/log/suricata/")
-
+	f = append(f, "max-pending-packets: 2048")
+	f = append(f, "host-mode: sniffer-only")
+	f = append(f, "default-log-dir: /var/log/suricata/")
+	f = append(f, ``)
+	f = append(f, `plugins:`)
+	f = append(f, "  - /usr/lib/suricata/pfring.so")
+	f = append(f, ``)
 	f = append(f, `stats:`)
 	f = append(f, `  enabled: yes`)
 	f = append(f, `  interval: 300`)
@@ -67,42 +56,24 @@ func SuricataConfig(suricataPfRing int) error {
 	f = append(f, "outputs:")
 	f = append(f, "  - eve-log:")
 	f = append(f, "      enabled: yes")
-	f = append(f, "      filetype: regular")
-	f = append(f, "      filename: /var/log/suricata/eve.json")
-	/*
-		f = append(f, "      file: syslog")
-		f = append(f, "      filetype: syslog")
-		f = append(f, "      identity: suricata")
-		f = append(f, "      level: debug")
-		f = append(f, "      facility: local0")
-		f = append(f, "      priority: info")
-		f = append(f, "      server: 127.0.0.1")
-		f = append(f, "      port: 5516")
-		f = append(f, "      protocol: udp")
-
-	*/
+	f = append(f, "      filetype: unix_stream")
+	f = append(f, "      filename: /run/suricata/alerts.sock")
 	f = append(f, "      format: json")
 	f = append(f, "      types:")
-	f = append(f, "        - alert")
-	if surcataLogHTTP == 1 {
-		f = append(f, "        - http:")
-		f = append(f, "            extended: yes")
+	ztypes := []string{"alert", "flow", "stats", "dns", "ssh"}
+	for _, ztype := range ztypes {
+		f = append(f, fmt.Sprintf("        - %v", ztype))
 	}
-	if surcataLogDNS == 1 {
-		f = append(f, "        - dns")
-	}
-	if surcataLogTLS == 1 {
-		f = append(f, "        - tls:")
-		f = append(f, "            extended: yes")
-	}
-	if surcataLogFiles == 1 {
-		f = append(f, "        - files:")
-		f = append(f, "            force-magic: no")
-		f = append(f, "            force-md5: no")
-	}
-	if surcataLogSSH == 1 {
-		f = append(f, "        - ssh")
-	}
+	f = append(f, "        - http2:")
+	f = append(f, "            extended: yes")
+	f = append(f, "        - http:")
+	f = append(f, "            extended: yes")
+	f = append(f, "        - tls:")
+	f = append(f, "            extended: yes")
+	f = append(f, "        - files:")
+	f = append(f, "            force-magic: no")
+	f = append(f, "            force-md5: no")
+	f = append(f, ``)
 	f = append(f, `      xff:`)
 	f = append(f, `        enabled: no`)
 	f = append(f, `        mode: extra-data`)
@@ -162,12 +133,6 @@ func SuricataConfig(suricataPfRing int) error {
 	f = append(f, `      interval: 300`)
 	f = append(f, `      append: no`)
 	f = append(f, ``)
-	f = append(f, `  # a line based alerts log similar to fast.log into syslog`)
-	f = append(f, `  - syslog:`)
-	f = append(f, `      enabled: yes`)
-	f = append(f, `      identity: "suricata"`)
-	f = append(f, `      facility: local5`)
-	f = append(f, ``)
 	f = append(f, `  # a line based information for dropped packets in IPS mode`)
 	f = append(f, `  - drop:`)
 	f = append(f, `      enabled: no`)
@@ -183,13 +148,13 @@ func SuricataConfig(suricataPfRing int) error {
 	f = append(f, `      #waldo: file.waldo # waldo file to store the file_id across runs`)
 	f = append(f, ``)
 
-	SuricataTrackFiles_enabled := "no"
+	SuricatatrackfilesEnabled := "no"
 	SuricataTrackFiles := sockets.GET_INFO_INT("SuricataTrackFiles")
 	if SuricataTrackFiles == 1 {
-		SuricataTrackFiles_enabled = "yes"
+		SuricatatrackfilesEnabled = "yes"
 	}
 	f = append(f, `  - file-log:`)
-	f = append(f, fmt.Sprintf("      enabled: %v", SuricataTrackFiles_enabled))
+	f = append(f, fmt.Sprintf("      enabled: %v", SuricatatrackfilesEnabled))
 	f = append(f, `      filename: files-json.log`)
 	f = append(f, `      append: yes`)
 	f = append(f, `      filetype: regular`)
@@ -407,92 +372,13 @@ func SuricataConfig(suricataPfRing int) error {
 	f = append(f, `    size4096: 0`)
 	f = append(f, `    size10386: 0`)
 	f = append(f, `    size16384: 0`)
-	f = append(f, fmt.Sprintf(`# Listen Interfaces here: PFRING:%d`, suricataPfRing))
-	ifaces := SuricataConfigInterfaces()
-	if suricataPfRing == 1 {
-		f = append(f, pfringConfiguration(ifaces))
-	} else {
-		f = append(f, afPacketConfiguration(ifaces))
-	}
+	f = append(f, PFRingIfaces.Build())
 	f = append(f, `default-rule-path: /etc/suricata/rules`)
 	f = append(f, "rule-files:")
+	f = append(f, writePersoRule())
 	f = append(f, writeWhitelistRule())
 	f = append(f, classifications())
-	f = append(f, `# Holds variables that would be used by the engine.`)
-	f = append(f, `vars:`)
-	f = append(f, `  address-groups:`)
-
-	var HOME_NET []string
-	var z []string
-	for ips, _ := range homeNet {
-		ips = strings.TrimSpace(ips)
-		if ips == "" {
-			continue
-		}
-		if !ipclass.IsValidIPorCDIRorRange(ips) {
-			continue
-		}
-		if ips == "0.0.0.0" {
-			continue
-		}
-		if ips == "0.0.0.0/0" {
-			continue
-		}
-		HOME_NET = append(HOME_NET, ips)
-	}
-	for ips, _ := range trustedNet {
-		ips = strings.TrimSpace(ips)
-		if ips == "" {
-			continue
-		}
-		if !ipclass.IsValidIPorCDIRorRange(ips) {
-			continue
-		}
-		if ips == "0.0.0.0" {
-			continue
-		}
-		if ips == "0.0.0.0/0" {
-			continue
-		}
-		z = append(z, ips)
-	}
-
-	if len(HOME_NET) == 0 {
-		HOME_NET = []string{"127.0.0.0/8", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"}
-	}
-
-	f = append(f, fmt.Sprintf("    HOME_NET: \"[%v]\"", strings.Join(HOME_NET, ",")))
-	f = append(f, fmt.Sprintf("    TRUSTED_NET: \"[%v]\"", strings.Join(z, ",")))
-	f = append(f, `    EXTERNAL_NET: "!$HOME_NET"`)
-	f = append(f, `    HTTP_SERVERS: "$HOME_NET"`)
-	f = append(f, `    SMTP_SERVERS: "$HOME_NET"`)
-	f = append(f, `    SQL_SERVERS: "$HOME_NET"`)
-	f = append(f, `    DNS_SERVERS: "$HOME_NET"`)
-	f = append(f, `    TELNET_SERVERS: "$HOME_NET"`)
-	f = append(f, `    AIM_SERVERS: "$EXTERNAL_NET"`)
-	f = append(f, `    DNP3_SERVER: "$HOME_NET"`)
-	f = append(f, `    DNP3_CLIENT: "$HOME_NET"`)
-	f = append(f, `    MODBUS_CLIENT: "$HOME_NET"`)
-	f = append(f, `    MODBUS_SERVER: "$HOME_NET"`)
-	f = append(f, `    ENIP_CLIENT: "$HOME_NET"`)
-	f = append(f, `    ENIP_SERVER: "$HOME_NET"`)
-	f = append(f, ``)
-	f = append(f, `  port-groups:`)
-	f = append(f, fmt.Sprintf("    HTTP_PORTS: \"[%v]\"", strings.Join(getHttpPorts(), ",")))
-	f = append(f, `    SHELLCODE_PORTS: "!80"`)
-	f = append(f, `    ORACLE_PORTS: 1521`)
-	f = append(f, `    SSH_PORTS: 22`)
-	f = append(f, `    DNP3_PORTS: 20000`)
-	f = append(f, `    FILE_DATA_PORTS: "[110,143]"`)
-	f = append(f, ``)
-	f = append(f, `# Set the order of alerts bassed on actions`)
-	f = append(f, `# The default order is pass, drop, reject, alert`)
-	f = append(f, `action-order:`)
-	f = append(f, `  - pass`)
-	f = append(f, `  - drop`)
-	f = append(f, `  - reject`)
-	f = append(f, `  - alert`)
-	f = append(f, ``)
+	f = append(f, AllVars())
 	f = append(f, `# IP Reputation`)
 	f = append(f, `reputation-categories-file: /etc/suricata/iprep/categories.org`)
 	f = append(f, `default-reputation-path: /etc/suricata/iprep`)
@@ -725,6 +611,85 @@ func SuricataConfig(suricataPfRing int) error {
 
 	return nil
 }
+func AllVars() string {
+
+	TrustedNets := BPFfilter.TrustedNets()
+	trustedNet := TrustedNets
+	trustedNet["127.0.0.1"] = true
+
+	homeNet := make(map[string]bool)
+	homeNet["192.168.0.0/16"] = true
+	homeNet["10.0.0.0/8"] = true
+	homeNet["172.16.0.0/12"] = true
+
+	var HOME_NET []string
+	var z []string
+	for ips, _ := range homeNet {
+		ips = strings.TrimSpace(ips)
+		if ips == "" {
+			continue
+		}
+		if !ipclass.IsValidIPorCDIRorRange(ips) {
+			continue
+		}
+		if ips == "0.0.0.0" {
+			continue
+		}
+		if ips == "0.0.0.0/0" {
+			continue
+		}
+		HOME_NET = append(HOME_NET, ips)
+	}
+	for ips, _ := range trustedNet {
+		ips = strings.TrimSpace(ips)
+		if ips == "" {
+			continue
+		}
+		if !ipclass.IsValidIPorCDIRorRange(ips) {
+			continue
+		}
+		if ips == "0.0.0.0" {
+			continue
+		}
+		if ips == "0.0.0.0/0" {
+			continue
+		}
+		z = append(z, ips)
+	}
+
+	if len(HOME_NET) == 0 {
+		HOME_NET = []string{"127.0.0.0/8", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"}
+	}
+	var f []string
+	f = append(f, `# Holds variables that would be used by the engine.`)
+	f = append(f, `vars:`)
+	f = append(f, `  address-groups:`)
+	f = append(f, fmt.Sprintf("    HOME_NET: \"[%v]\"", strings.Join(HOME_NET, ",")))
+	f = append(f, fmt.Sprintf("    TRUSTED_NET: \"[%v]\"", strings.Join(z, ",")))
+	f = append(f, `    EXTERNAL_NET: "!$HOME_NET"`)
+	f = append(f, `    HTTP_SERVERS: "$HOME_NET"`)
+	f = append(f, `    SMTP_SERVERS: "$HOME_NET"`)
+	f = append(f, `    SQL_SERVERS: "$HOME_NET"`)
+	f = append(f, `    DNS_SERVERS: "$HOME_NET"`)
+	f = append(f, `    TELNET_SERVERS: "$HOME_NET"`)
+	f = append(f, `    AIM_SERVERS: "$EXTERNAL_NET"`)
+	f = append(f, `    DNP3_SERVER: "$HOME_NET"`)
+	f = append(f, `    DNP3_CLIENT: "$HOME_NET"`)
+	f = append(f, `    MODBUS_CLIENT: "$HOME_NET"`)
+	f = append(f, `    MODBUS_SERVER: "$HOME_NET"`)
+	f = append(f, `    ENIP_CLIENT: "$HOME_NET"`)
+	f = append(f, `    ENIP_SERVER: "$HOME_NET"`)
+	f = append(f, ``)
+	f = append(f, `  port-groups:`)
+	f = append(f, fmt.Sprintf("    HTTP_PORTS: \"[%v]\"", strings.Join(getHttpPorts(), ",")))
+	f = append(f, `    SHELLCODE_PORTS: "!80"`)
+	f = append(f, `    ORACLE_PORTS: 1521`)
+	f = append(f, `    SSH_PORTS: 22`)
+	f = append(f, `    DNP3_PORTS: 20000`)
+	f = append(f, `    FILE_DATA_PORTS: "[110,143]"`)
+	f = append(f, ``)
+	return strings.Join(f, "\n")
+}
 
 func threshold() error {
 	var suppressRules []string
@@ -883,92 +848,7 @@ func CheckTables() {
 	apostgres.CreateIndex(db, "suricata_events", "keyi", []string{"zDate", "src_ip", "dst_ip", "severity", "signature", "xcount"})
 	go ParseClassifications()
 }
-func SuricataConfigInterfaces() []SuriIfaces {
-	db, err := SqliteConns.SuricataConnectRO()
-	if err != nil {
-		return []SuriIfaces{}
-	}
-	defer func(db *sql.DB) {
-		_ = db.Close()
-	}(db)
 
-	rows, err := db.Query("SELECT interface, threads FROM suricata_interfaces WHERE enable=1")
-	if err != nil {
-		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		return []SuriIfaces{}
-	}
-	defer func(rows *sql.Rows) {
-		_ = rows.Close()
-	}(rows)
-
-	var Res []SuriIfaces
-	for rows.Next() {
-		var interfaceName string
-		var threads sql.NullInt32
-
-		err = rows.Scan(&interfaceName, &threads)
-		if err != nil {
-			log.Error().Msgf("%v Failed to scan row: %v", futils.GetCalleRuntime(), err)
-			continue
-		}
-
-		if !ipclass.IsInterfaceExists(interfaceName) {
-			log.Error().Msgf("%v Interface:%s Failed", futils.GetCalleRuntime(), interfaceName)
-			continue
-		}
-
-		var ifac SuriIfaces
-		ifac.IFaceName = interfaceName
-		ifac.threads = int(threads.Int32)
-		Res = append(Res, ifac)
-
-	}
-	return Res
-}
-func pfringConfiguration(ifaces []SuriIfaces) string {
-	var f []string
-
-	f = append(f, fmt.Sprintf("# %v Listen Interfaces", futils.GetCalleRuntime()))
-	f = append(f, "# PF_RING configuration. for use with native PF_RING support")
-	f = append(f, "# for more info see http://www.ntop.org/PF_RING.html")
-
-	clid := 100
-	c := 0
-	f = append(f, "pfring:")
-
-	suricataInterface := sockets.GET_INFO_STR("SuricataInterface")
-	if suricataInterface == "" {
-		suricataInterface = "eth0"
-	}
-
-	// Iterate over query results
-	for _, iface := range ifaces {
-
-		threadCount := 1
-		if iface.threads > 0 {
-			threadCount = iface.threads
-		}
-		f = append(f, fmt.Sprintf("  - interface: %s", iface.IFaceName))
-		f = append(f, fmt.Sprintf("    threads: %d", threadCount))
-		f = append(f, fmt.Sprintf("    cluster-id: %d", clid))
-		f = append(f, "    cluster-type: cluster_flow")
-		f = append(f, "")
-		c++
-	}
-
-	if c == 0 {
-		f = append(f, fmt.Sprintf("# no interface set, use the default %s", suricataInterface))
-		if ipclass.IsInterfaceExists(suricataInterface) {
-			f = append(f, fmt.Sprintf("  - interface: %s", suricataInterface))
-			f = append(f, "    threads: 1")
-			f = append(f, "    cluster-id: 99")
-			f = append(f, "    cluster-type: cluster_flow")
-			f = append(f, "")
-		}
-	}
-
-	return strings.Join(f, "\n")
-}
 func hyperScan() (bool, string) {
 	// Read the content of /proc/cpuinfo
 	file, err := os.Open("/proc/cpuinfo")
@@ -1019,69 +899,20 @@ func hyperScan() (bool, string) {
 	return hyperScanSupported, mpmAlgo
 
 }
-func afPacketConfiguration(ifaces []SuriIfaces) string {
-	var f []string
-	cliID := 100
-	count := 0
-
-	f = append(f, "# AF Packet configuration")
-	f = append(f, "# for more info see http://www.ntop.org/PF_RING.html")
-	f = append(f, "af-packet:")
-	SuricataInterface := sockets.GET_INFO_STR("SuricataInterface")
-	if SuricataInterface == "" {
-		SuricataInterface = "eth0"
-	}
-
-	// Loop through interfaces
-	for _, iface := range ifaces {
-		cliID -= 1
-
-		f = append(f, fmt.Sprintf("  - interface: %s", iface.IFaceName))
-		f = append(f, "    # Number of receive threads. \"auto\" uses the number of cores")
-
-		if iface.threads > 0 {
-			f = append(f, fmt.Sprintf("    threads: %d", iface.threads))
-		} else {
-			f = append(f, "    threads: auto")
-		}
-
-		f = append(f, fmt.Sprintf("    cluster-id: %d", cliID))
-		f = append(f, `    cluster-type: cluster_flow`)
-		f = append(f, `    defrag: yes`)
-		f = append(f, `    use-mmap: yes`)
-		//f = append(f, `    #mmap-locked: yes`)
-		//f = append(f, `    #tpacket-v3: yes`)
-		//f = append(f, `    #ring-size: 2048`)
-		//f = append(f, `    #block-size: 32768`)
-		//f = append(f, `    #block-timeout: 10`)
-		//f = append(f, `    #use-emergency-flush: yes`)
-		f = append(f, `    buffer-size: 32768`)
-		//f = append(f, `    # disable-promisc: no`)
-		//f = append(f, `    #checksum-checks: kernel`)
-		//f = append(f, `    #bpf-filter: port 80 or udp`)
-		//f = append(f, `    #copy-mode: ips`)
-		//f = append(f, `    #copy-iface: eth1`)
-		count++
-	}
-
-	// If no valid interfaces, use default
-	if count == 0 {
-		f = append(f, fmt.Sprintf("# no interface set, use the default %s", SuricataInterface))
-		if ipclass.IsInterfaceExists(SuricataInterface) {
-			f = append(f, fmt.Sprintf("  - interface: %s", SuricataInterface))
-			f = append(f, "    threads: auto")
-			f = append(f, "    cluster-id: 99")
-		}
-	}
-
-	return strings.Join(f, "\n")
-}
 func writeWhitelistRule() string {
 	var f []string
 	trustedPattern := "/etc/suricata/rules/whitelist.rules"
 	f = append(f, " - whitelist.rules")
-	trusted_rule := `alert ip $TRUSTED_NET any -> any any (msg:"Allow traffic from Trusted network";sid:1000000; rev:1;)`
-	_ = futils.FilePutContents(trustedPattern, trusted_rule+"\n")
+	trustedRule := `alert ip $TRUSTED_NET any -> any any (msg:"Allow traffic from Trusted network";sid:1000000; rev:1;)`
+	_ = futils.FilePutContents(trustedPattern, trustedRule+"\n")
+	return strings.Join(f, "\n")
+}
+func writePersoRule() string {
+	var f []string
+	filePath := "/etc/suricata/rules/local.rules"
+	f = append(f, " - local.rules")
+	myrule := `alert tcp any any -> any any ( app-layer-protocol:ssh; flow:to_server,established; msg:"SSH session detected"; classtype:policy-violation; sid:1000001; rev:1; )`
+	_ = futils.FilePutContents(filePath, myrule+"\n")
 	return strings.Join(f, "\n")
 }
 
@@ -1107,6 +938,15 @@ func PatchTables() {
 	if err != nil {
 		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
 	}
+	csqlite.FieldExistCreateINT(db, "suricata_interfaces", "WantIPv6")
+	csqlite.FieldExistCreateINT(db, "suricata_interfaces", "WhiteInternalNets")
+	csqlite.FieldExistCreateINT(db, "suricata_interfaces", "NoBrodcast")
+	csqlite.FieldExistCreateINT(db, "suricata_interfaces", "NoMulticast")
+	csqlite.FieldExistCreateINT(db, "suricata_interfaces", "NoARP")
+	csqlite.FieldExistCreateINT(db, "suricata_interfaces", "OnlyNewTCP")
+	csqlite.FieldExistCreateTEXTVal(db, "suricata_interfaces", "PortsTCP", "*")
+	csqlite.FieldExistCreateTEXTVal(db, "suricata_interfaces", "PortsUDP", "*")
+
 }
 
 func classificationsDefaults() {

@@ -13,7 +13,7 @@ import (
 var SylogMsgBan string
 var SylogMsgDetect string
 var LogsRotateDefaultSizeRotation int64
-var LogFileName = "/var/log/articarest.log"
+var LogFileName = "/var/log/artica-suricata.log"
 
 func initZerolog() bool {
 	zerolog.TimeFieldFormat = zerolog.TimeFormatUnix

@@ -15,6 +15,7 @@ import (
 	"crypto/cipher"
 	"crypto/md5"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/base64"
 	"encoding/gob"
 	"encoding/hex"
@@ -2708,6 +2709,24 @@ func Int64ToString(svalue int64) string {
 }
 func IntToString(svalue int) string {
 	return strconv.Itoa(svalue)
+}
+func Int32NilToBool(svalue sql.NullInt32) bool {
+	if !svalue.Valid {
+		return false
+	}
+	if svalue.Int32 == 1 {
+		return true
+	}
+	return false
+}
+func Int32NilToInt(svalue sql.NullInt32) int {
+	if !svalue.Valid {
+		return 0
+	}
+	if svalue.Int32 == 1 {
+		return 1
+	}
+	return 0
 }
 func BinaryToUint32(ip net.IP) uint32 {
 	return uint32(ip[0])<<24 | uint32(ip[1])<<16 | uint32(ip[2])<<8 | uint32(ip[3])
@@ -6688,6 +6707,28 @@ func GetCalleRuntimeAll() string {
 		str = append(str, fmt.Sprintf("%s[%s:%d]", file, funcName, line))
 	}
 	return strings.Join(str, "\n")
+}
+func LocalFQDN() string {
+	hostname, err := os.Hostname()
+	if err != nil || hostname == "" {
+		return "unknown"
+	}
+
+	addrs, err := net.LookupHost(hostname)
+	if err != nil || len(addrs) == 0 {
+		// No DNS record, return raw hostname
+		return hostname
+	}
+
+	// Try reverse lookup to get full name
+	names, err := net.LookupAddr(addrs[0])
+	if err == nil && len(names) > 0 {
+		fqdn := strings.TrimSuffix(names[0], ".")
+		return fqdn
+	}
+
+	// Fallback to simple hostname if reverse lookup fails
+	return hostname
 }
 
 func GetCalleRuntime() string {
