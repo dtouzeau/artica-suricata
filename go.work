@@ -14,10 +14,10 @@ use (
 	apostgres
 	csqlite
 	RESTApi
-	suricata/SuricataUpdates
 	suricata/SuricataTools
 	suricata/suricataConfig
 	suricata/SuricataDashboard
+	SuriStructs
 	surisock
 	httpclient
 	ipclass
@@ -33,5 +33,10 @@ use (
 	SuricataService
 	BPFfilter
 	PFRingIfaces
+	SuricataACLS
+	surirules
+	Classifications
+	Update
+	Update/Otx
 
 )

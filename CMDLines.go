@@ -1,15 +1,29 @@
 package main
 
 import (
+	"Update"
+	"Update/Otx"
 	"fmt"
 	"os"
 	"suricata"
-
 	"suricata/SuricataTools"
-	"suricata/SuricataUpdates"
+	"surirules"
 )
 
 func ParseCmdLines() {
+
+	if *CMDParseRules {
+		err := surirules.ImportSuricataRulesToSQLite()
+		if err != nil {
+			fmt.Println(err.Error())
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	if *CMDOtx {
+		Otx.Run()
+		os.Exit(0)
+	}
 
 	if *cmdstopsuricata {
 		suricata.Stop()
@@ -19,8 +33,12 @@ func ParseCmdLines() {
 		_ = suricata.Start()
 		os.Exit(0)
 	}
+	if *CMDSuricataLUpdate {
+		Update.Run()
+		os.Exit(0)
+	}
 	if *CMDSuricataUpdates {
-		err := SuricataUpdates.OpenInfoSecFoundation()
+		err := Update.OpenInfoSecFoundation()
 		if err != nil {
 			fmt.Println(err.Error())
 			os.Exit(1)

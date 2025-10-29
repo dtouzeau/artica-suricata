@@ -4,8 +4,9 @@ import (
 	"SqliteConns"
 	"database/sql"
 	"futils"
-	"github.com/rs/zerolog/log"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
 func LocalNets() map[string]bool {
@@ -30,10 +31,7 @@ func LocalNets() map[string]bool {
 		return zNet
 	}
 	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-
-		}
+		_ = rows.Close()
 	}(rows)
 
 	for rows.Next() {

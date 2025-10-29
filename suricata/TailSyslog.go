@@ -1,6 +1,7 @@
 package suricata
 
 import (
+	"Classifications"
 	"apostgres"
 	"database/sql"
 	"encoding/json"
@@ -14,7 +15,6 @@ import (
 	"regexp"
 	"sockets"
 	"strings"
-	"suricata/suricataConfig"
 	"time"
 )
 
@@ -224,7 +224,7 @@ func LoadClassifications(Nolloop bool) {
 	}
 
 	if count == 0 {
-		suricataConfig.ParseClassifications()
+		Classifications.Parse()
 		if !Nolloop {
 			LoadClassifications(Nolloop)
 		}

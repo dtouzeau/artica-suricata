@@ -1,17 +1,19 @@
-package SuricataUpdates
+package Update
 
 import (
 	"compressor"
 	"fmt"
 	"futils"
-	"github.com/rs/zerolog/log"
-	"gopkg.in/yaml.v3"
 	"httpclient"
 	"notifs"
 	"os"
 	"sockets"
 	"strings"
 	"suricata/SuricataTools"
+	"surirules"
+
+	"github.com/rs/zerolog/log"
+	"gopkg.in/yaml.v3"
 )
 
 type Parameter struct {
@@ -188,6 +190,8 @@ func OpenInfoSecFoundation() error {
 		notifs.SquidAdminMysql(1, fmt.Sprintf("{success} updated %d files signatures", UpdatedCount), "", futils.GetCalleRuntime(), 178)
 		SuricataTools.FixDuplicateRules()
 		SuricataTools.Reload()
+		_ = surirules.ImportSuricataRulesToSQLite()
+		surirules.Classifications()
 	}
 
 	return nil

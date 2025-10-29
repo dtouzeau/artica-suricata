@@ -1,6 +1,11 @@
 <component name="InspectionProjectProfileManager">
   <profile version="1.0">
     <option name="myName" value="Project Default" />
+    <inspection_tool class="GoDfaErrorMayBeNotNil" enabled="true" level="WARNING" enabled_by_default="true">
+      <methods>
+        <method importPath="artica-suricata/pkg/mod/github.com/!alien!vault-!labs/!o!t!x-!go-!s!d!k@v0.0.0-20160304163638-ac284b780774/src/otxapi" receiver="*OTXThreatIntelFeedService" name="List" />
+      </methods>
+    </inspection_tool>
     <inspection_tool class="SqlNoDataSourceInspection" enabled="false" level="WARNING" enabled_by_default="false" />
   </profile>
 </component>

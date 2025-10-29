@@ -52,6 +52,12 @@ func ClusterEventsConnectRW() (*sql.DB, error) {
 func SuricataConnectRO() (*sql.DB, error) {
 	return connectRO("suricata.db")
 }
+func SuricataRulesConnectRO() (*sql.DB, error) {
+	return connectRO("suricata-rules.db")
+}
+func SuricataRulesConnectRW() (*sql.DB, error) {
+	return connectRW("suricata-rules.db")
+}
 func SuricataConnectRW() (*sql.DB, error) {
 	return connectRW("suricata.db")
 }

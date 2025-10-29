@@ -2,6 +2,7 @@ package suricataConfig
 
 import (
 	"BPFfilter"
+	"Classifications"
 	"PFRingIfaces"
 	"SqliteConns"
 	"apostgres"
@@ -385,7 +386,7 @@ func SuricataConfig() error {
 	f = append(f, `reputation-files:`)
 
 	reputationFiles := []string{"alienvault.list", "emergingthreatspro.list", "usom.list",
-		"firehol_level1.list", "blocklist_de_strongips.list", "cibadguys.list",
+		"firehol_level1.list", "blocklist_de_strongips.list", "cibadguys.list", "otx.list",
 	}
 
 	for _, fname := range reputationFiles {
@@ -713,6 +714,7 @@ func IPRepRules() {
 		"alert tcp any any -> any any (msg:\"Bad reputation: Firehol level 1 reputation list\"; iprep:any,firehol1,=,127; sid:10004; rev:1;)",
 		"alert tcp any any -> any any (msg:\"Bad reputation: Firehol strong\"; iprep:any,firehol_strong,=,127; sid:10005; rev:1;)",
 		"alert tcp any any -> any any (msg:\"Bad reputation: CINS Army List\"; iprep:any,cins,=,127; sid:10006; rev:1;)",
+		"alert ip $HOME_NET any -> any any (msg:\"OTX internal host talking to host known in pulse\"; flow:to_server; iprep:dst,Pulse,>,30; sid:41414141; rev:1;)",
 	}
 
 	// Join the rules into a single string with newlines
@@ -729,6 +731,7 @@ func IPRepCategories() {
 		"4,firehol1,Firehol level 1 reputation list",
 		"5,firehol_strong,Firehol more than 5.000 attacks during 2 months",
 		"6,cins,CINS Army List",
+		"41,Pulse,OTX community identified IP address",
 	}
 	categoriesContent := strings.Join(categories, "\n")
 	categoriesFilePath := "/etc/suricata/iprep/categories.org"
@@ -846,7 +849,7 @@ func CheckTables() {
 	apostgres.CreateIndex(db, "suricata_sig", "enabled", []string{"firewall", "notify", "enabled"})
 	apostgres.CreateIndex(db, "suricata_events", "PROXYNAMEi", []string{"proxyname"})
 	apostgres.CreateIndex(db, "suricata_events", "keyi", []string{"zDate", "src_ip", "dst_ip", "severity", "signature", "xcount"})
-	go ParseClassifications()
+	go Classifications.Parse()
 }
 
 func hyperScan() (bool, string) {
@@ -946,6 +949,60 @@ func PatchTables() {
 	csqlite.FieldExistCreateINT(db, "suricata_interfaces", "OnlyNewTCP")
 	csqlite.FieldExistCreateTEXTVal(db, "suricata_interfaces", "PortsTCP", "*")
 	csqlite.FieldExistCreateTEXTVal(db, "suricata_interfaces", "PortsUDP", "*")
+	csqlite.FieldExistCreateINT(db, "suricata_rules_packages", "rulesnumber")
+
+	suricata_rules_packages_count := csqlite.CountRows(db, "suricata_rules_packages")
+
+	if suricata_rules_packages_count == 0 {
+		_, err = db.Exec(`INSERT OR IGNORE INTO suricata_rules_packages (rulefile,enabled,category) VALUES
+		('botcc.rules',0,'DMZ'),
+		('ciarmy.rules',0,'DMZ'),
+		('compromised.rules','0','DMZ'),
+		('drop.rules',1,'DMZ'),
+		('emerging-activex.rules',1,'WEB'),
+		('emerging-attack_response.rules',1,'ALL'),
+		('emerging-chat.rules',0,'WEB'),
+		('emerging-current_events.rules',0,'ALL'),
+		('emerging-dns.rules',0,'DMZ'),
+		('emerging-dos.rules',0,'DMZ'),
+		('emerging-exploit.rules',0,'DMZ'),
+		('emerging-ftp.rules',0,'DMZ'),
+		('emerging-games.rules',0,'ALL'),
+		('emerging-icmp_info.rules',0,'ALL'),
+		('emerging-icmp.rules',0,'ALL'),
+		('emerging-imap.rules',0,'DMZ'),
+		('emerging-inappropriate.rules',0,'WEB'),
+		('emerging-malware.rules',1,'WEB'),
+		('emerging-mobile_malware.rules',0,'WEB'),
+		('emerging-netbios.rules',0,'ALL'),
+		('emerging-p2p.rules',0,'WEB'),
+		('emerging-policy.rules',1,'WEB'),
+		('emerging-pop3.rules',0,'DMZ'),
+		('emerging-rpc.rules',0,'ALL'),
+		('emerging-scada.rules',0,'ALL'),
+		('emerging-scan.rules',1,'ALL'),
+		('emerging-shellcode.rules',1,'ALL'),
+		('emerging-smtp.rules',0,'DMZ'),
+		('emerging-snmp.rules',0,'ALL'),
+		('emerging-sql.rules',0,'ALL'),
+		('emerging-telnet.rules',0,'ALL'),
+		('emerging-tftp.rules',0,'ALL'),
+		('emerging-trojan.rules',1,'ALL'),
+		('emerging-user_agents.rules',0,'ALL'),
+		('emerging-voip.rules',0,'ALL'),
+		('emerging-web_client.rules',1,'HTTP'),
+		('emerging-web_server.rules',0,'HTTP'),
+		('emerging-web_specific_apps.rules',0,'HTTP'),
+		('emerging-worm.rules',1,'ALL'),
+		('tor.rules',0,'ALL'),
+		('decoder-events.rules',0,'ALL'),
+		('stream-events.rules',0,'ALL'),
+		('http-events.rules',0,'HTTP'),
+		('smtp-events.rules',0,'DMZ'),
+		('dns-events.rules',0,'DMZ'),
+		('tls-events.rules',0,'DMZ')`)
+
+	}
 
 }
 

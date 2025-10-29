@@ -1,34 +1,25 @@
-package suricataConfig
+package Classifications
 
 import (
 	"apostgres"
 	"bufio"
 	"database/sql"
 	"futils"
-	"github.com/rs/zerolog/log"
 	"os"
 	"regexp"
-	"sockets"
 	"strings"
+
+	"github.com/rs/zerolog/log"
 )
 
-func ParseClassifications() {
-
-	EnableSuricata := sockets.GET_INFO_INT("EnableSuricata")
-	if EnableSuricata == 0 {
-		return
-	}
-
+func Parse() {
 	file, err := os.Open("/etc/suricata/rules/classification.config")
 	if err != nil {
 		log.Error().Msgf("%v Error opening file: %v", futils.GetCalleRuntime(), err)
 		return
 	}
 	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-
-		}
+		_ = file.Close()
 	}(file)
 
 	db, err := apostgres.SQLConnect()
@@ -38,10 +29,7 @@ func ParseClassifications() {
 	}
 
 	defer func(db *sql.DB) {
-		err := db.Close()
-		if err != nil {
-
-		}
+		_ = db.Close()
 	}(db)
 
 	re := regexp.MustCompile(`^config classification:\s+(.+?),(.+?),([0-9]+)`)
@@ -62,6 +50,10 @@ func ParseClassifications() {
 			_, err := db.Exec(`INSERT INTO suricata_classifications (uduniq, shortname, description, priority) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, uduniq, shortname, description, priority)
 			if err != nil {
 				log.Error().Msgf("%v Error inserting row into DB: %v", futils.GetCalleRuntime(), err)
+			}
+			_, err = db.Exec(`UPDATE suricata_classifications SET description=$1,priority=$2 WHERE shortname=$3`, description, priority, shortname)
+			if err != nil {
+				log.Error().Msgf("%v Error update row into DB: %v", futils.GetCalleRuntime(), err)
 			}
 
 		}

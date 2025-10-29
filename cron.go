@@ -2,10 +2,10 @@ package main
 
 import (
 	"LogForward"
+	"Update"
 	"logrotate"
 	"suricata"
 	"suricata/SuricataDashboard"
-	"suricata/SuricataUpdates"
 	"suricata/suricataConfig"
 )
 
@@ -17,7 +17,7 @@ func Each15Minutes() {
 	logrotate.RotateEveJsonByPeriod()
 }
 func Each10Minutes() {
-	SuricataUpdates.Schedule()
+	Update.Run()
 	SuricataDashboard.CountOfSuricata()
 
 }

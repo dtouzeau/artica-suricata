@@ -1,10 +1,11 @@
-package SuricataUpdates
+package Update
 
 import (
+	"SuriStructs"
+	"Update/Otx"
 	"apostgres"
 	"bufio"
 	"compressor"
-	"csqlite"
 	"database/sql"
 	"fmt"
 	"futils"
@@ -16,6 +17,7 @@ import (
 	"sockets"
 	"strings"
 	"suricata/SuricataTools"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -23,7 +25,7 @@ import (
 const iprepDir = "/etc/suricata/iprep"
 const ProgressF = "suricata-update.progress"
 
-func Schedule() {
+func Run() {
 
 	pidtime := "/etc/artica-postfix/pids/exec.suricata.updates.php.update.time"
 	EnableSuricata := sockets.GET_INFO_INT("EnableSuricata")
@@ -43,49 +45,13 @@ func Schedule() {
 
 	TimeMin := futils.FileTimeMin(pidtime)
 	if int64(TimeMin) < SuricataUpdateInterval {
+		log.Debug().Msgf("%v %v < %v ABORTING", futils.GetCalleRuntime(), TimeMin, SuricataUpdateInterval)
 		return
 	}
 
 	futils.TouchFile(pidtime)
 	_ = Update()
 	_ = OpenInfoSecFoundation()
-	buildClassifications()
-
-}
-func sQLiteConnect() (error, *sql.DB) {
-	dbpath := "/home/artica/SQLITE/suricata.db"
-	db, err := sql.Open("sqlite3", dbpath)
-	if err != nil {
-		log.Error().Msgf("%v Error opening database", futils.GetCalleRuntime(), err.Error())
-		return err, nil
-	}
-	csqlite.ConfigureDBPool(db)
-	return nil, db
-}
-func buildClassifications() {
-
-	err, db := sQLiteConnect()
-	if err != nil {
-		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		return
-	}
-	defer func(db *sql.DB) {
-		err := db.Close()
-		if err != nil {
-
-		}
-	}(db)
-
-	ffiles := futils.DirectoryScan("/etc/suricata/rules")
-	for _, ff := range ffiles {
-		if !strings.HasSuffix(ff, ".rules") {
-			continue
-		}
-		_, err = db.Exec(`INSERT OR IGNORE INTO suricata_rules_packages (rulefile,category) VALUES(?,'ALL')`, ff)
-		if err != nil {
-			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		}
-	}
 
 }
 
@@ -96,14 +62,14 @@ func Update() error {
 	CurrentEmergingRulesMD5 := sockets.GET_INFO_STR("CurrentEmergingRulesMD5")
 	tmpdir := futils.TEMPDIR()
 	targetpath := fmt.Sprintf("%v/emerging.rules.tar.gz.md5", tmpdir)
-	SURICATA_VERSION := sockets.GET_INFO_STR("SURICATA_VERSION")
+	SuricataVersion := sockets.GET_INFO_STR("SURICATA_VERSION")
 
-	if SURICATA_VERSION == "0.0.0" {
+	if SuricataVersion == "0.0.0" {
 		notifs.BuildProgress(110, "{failed} unable to stat suricata version", ProgressF)
 		return fmt.Errorf("suricata version 0.0.0 is unsupported")
 	}
 	log.Debug().Msgf("%v CurrentEmergingRulesMD5=%v TMPDIR:%v", futils.GetCalleRuntime(), CurrentEmergingRulesMD5, tmpdir)
-	uri := fmt.Sprintf("https://rules.emergingthreatspro.com/open/suricata-%v/emerging.rules.tar.gz.md5", SURICATA_VERSION)
+	uri := fmt.Sprintf("https://rules.emergingthreatspro.com/open/suricata-%v/emerging.rules.tar.gz.md5", SuricataVersion)
 	if !httpclient.DownloadFile(uri, targetpath) {
 		notifs.BuildProgress(110, "{failed} {downloading} emerging.rules.tar.gz.md5", ProgressF)
 		return fmt.Errorf("downloading failed")
@@ -119,7 +85,7 @@ func Update() error {
 	}
 	NewEmergingRulesMD5 := strings.TrimSpace(data[0])
 
-	uri = fmt.Sprintf("https://rules.emergingthreatspro.com/open/suricata-%v/version.txt", SURICATA_VERSION)
+	uri = fmt.Sprintf("https://rules.emergingthreatspro.com/open/suricata-%v/version.txt", SuricataVersion)
 	targetpath = fmt.Sprintf("%v/version.txt", tmpdir)
 	if !httpclient.DownloadFile(uri, targetpath) {
 		notifs.BuildProgress(110, "{failed} {downloading} version.txt", ProgressF)
@@ -129,7 +95,7 @@ func Update() error {
 	futils.DeleteFile(targetpath)
 
 	notifs.BuildProgress(30, "{update_now} emerging.rules.tar.gz", ProgressF)
-	uri = fmt.Sprintf("https://rules.emergingthreatspro.com/open/suricata-%v/emerging.rules.tar.gz", SURICATA_VERSION)
+	uri = fmt.Sprintf("https://rules.emergingthreatspro.com/open/suricata-%v/emerging.rules.tar.gz", SuricataVersion)
 	targetpath = fmt.Sprintf("%v/emerging.rules.tar.gz", tmpdir)
 	if !httpclient.DownloadFile(uri, targetpath) {
 		notifs.BuildProgress(110, "{failed} emerging.rules.tar.gz", ProgressF)
@@ -156,32 +122,41 @@ func Update() error {
 	final := false
 	_ = AbuseCh(false)
 	if NewEmergingRulesMD5 == CurrentEmergingRulesMD5 {
-		notifs.BuildProgress(40, "{downloading} IP Reputation 1/6", ProgressF)
+		notifs.BuildProgress(40, "{downloading} IP Reputation 1/7", ProgressF)
 		if ipreputationAlienvault() {
 			final = true
 		}
-		notifs.BuildProgress(45, "{downloading} IP Reputation 2/6", ProgressF)
+		notifs.BuildProgress(45, "{downloading} IP Reputation 2/7", ProgressF)
 		if ipreputationEmergingThreatsPro() {
 			final = true
 		}
-		notifs.BuildProgress(50, "{downloading} IP Reputation 3/6", ProgressF)
+		notifs.BuildProgress(50, "{downloading} IP Reputation 3/7", ProgressF)
 		if ipreputationFirehol1() {
 			final = true
 		}
-		notifs.BuildProgress(55, "{downloading} IP Reputation 4/6", ProgressF)
+		notifs.BuildProgress(55, "{downloading} IP Reputation 4/7", ProgressF)
 		if ipreputationUsom() {
 			final = true
 		}
-		notifs.BuildProgress(60, "{downloading} IP Reputation 5/6", ProgressF)
+		notifs.BuildProgress(60, "{downloading} IP Reputation 5/7", ProgressF)
 		if ipreputationBlocklistDeStrongips() {
 			final = true
 		}
-		notifs.BuildProgress(65, "{downloading} IP Reputation 6/6", ProgressF)
+		notifs.BuildProgress(65, "{downloading} IP Reputation 6/7", ProgressF)
 		if ipreputationCibadguys() {
 			final = true
 		}
+		notifs.BuildProgress(66, "{downloading} IP AlienVault data feeds 7/7", ProgressF)
+		if Otx.Run() {
+			final = true
+		}
+
 		notifs.BuildProgress(70, "{downloading} IP Reputation {done}", ProgressF)
 		if final {
+			Global := SuriStructs.LoadConfig()
+			Global.LastUpdate = time.Now().Unix()
+			SuriStructs.SaveConfig(Global)
+
 			notifs.BuildProgress(75, "{reloading}", ProgressF)
 			_ = buildFinal()
 			notifs.BuildProgress(100, "{done}", ProgressF)
@@ -424,7 +399,7 @@ func ipreputationUsom() bool {
 	tempDir := os.TempDir()
 	targetPath := filepath.Join(tempDir, "usom_ip_list.txt")
 
-	notifs.BuildProgress(56, "{downloading} IP Reputation 4/6", ProgressF)
+	notifs.BuildProgress(56, "{downloading} IP Reputation 4/7", ProgressF)
 	if !httpclient.DownloadFile(uri, targetPath) {
 		log.Error().Msgf("%v Unable to download reputation file", futils.GetCalleRuntime())
 		return false
@@ -449,7 +424,7 @@ func ipreputationUsom() bool {
 
 		}
 	}(file)
-	notifs.BuildProgress(57, "{downloading} IP Reputation 4/6", ProgressF)
+	notifs.BuildProgress(57, "{downloading} IP Reputation 4/7", ProgressF)
 	outputPath := filepath.Join(iprepDir, "usom.list")
 	outputFile, err := os.Create(outputPath)
 	if err != nil {
@@ -464,7 +439,7 @@ func ipreputationUsom() bool {
 	}(outputFile)
 
 	scanner := bufio.NewScanner(file)
-	notifs.BuildProgress(58, "{downloading} IP Reputation 4/6", ProgressF)
+	notifs.BuildProgress(58, "{downloading} IP Reputation 4/7", ProgressF)
 	re := regexp.MustCompile(`^([0-9\.]+)`) // Regex to match IP addresses
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -475,7 +450,7 @@ func ipreputationUsom() bool {
 	}
 
 	_ = os.Remove(targetPath)
-	notifs.BuildProgress(59, "{downloading} IP Reputation 4/6", ProgressF)
+	notifs.BuildProgress(59, "{downloading} IP Reputation 4/7", ProgressF)
 	sockets.SET_INFO_STR("usom.reputation", currentMD5)
 	return true
 }

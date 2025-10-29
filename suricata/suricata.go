@@ -4,6 +4,7 @@ import (
 	"CacheMem"
 	"GlobalsValues"
 	"SuricataService"
+	"Update"
 	"apostgres"
 	"articaunix"
 	"database/sql"
@@ -18,7 +19,6 @@ import (
 	"sockets"
 	"strings"
 	"suricata/SuricataTools"
-	"suricata/SuricataUpdates"
 	"suricata/suricataConfig"
 	"time"
 
@@ -86,7 +86,7 @@ func Install() {
 	CreateMonitService()
 
 	go func() {
-		_ = SuricataUpdates.Update()
+		Update.Run()
 	}()
 	//exec.openldap.upgrade.php --cve
 	go func() {

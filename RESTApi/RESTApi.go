@@ -1,6 +1,8 @@
 package RESTApi
 
 import (
+	"SuriStructs"
+	"Update"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,7 +10,6 @@ import (
 	"os"
 	"sockets"
 	"suricata"
-	"suricata/SuricataUpdates"
 	"surisock"
 	"time"
 
@@ -67,12 +68,25 @@ func restSuricataUpdate(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	go func() {
-		err := SuricataUpdates.Update()
-		if err != nil {
-
-		}
+		Update.Run()
 	}()
 	OutTrue(ctx)
+}
+func GlobalStatus(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	var data struct {
+		Status bool                   `json:"Status"`
+		Error  string                 `json:"Error"`
+		Info   SuriStructs.SuriDaemon `json:"Info"`
+	}
+	data.Status = true
+	data.Info = SuriStructs.LoadConfig()
+	jsonBytes, _ := json.MarshalIndent(data, "", "  ")
+	ctx.Response.Header.Set("Content-Type", "application/json;charset=UTF-8")
+	ctx.SetStatusCode(200)
+	_, _ = fmt.Fprintf(ctx, string(jsonBytes))
 }
 func restSuricataStats(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
@@ -199,6 +213,20 @@ func IfaceList(ctx *fasthttp.RequestCtx) {
 	ctx.Response.Header.Set("Content-Type", "application/json;charset=UTF-8")
 	ctx.SetStatusCode(200)
 	_, _ = fmt.Fprintf(ctx, string(jsonBytes))
+}
+func OtxSave(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	ApiKey := fmt.Sprintf("%v", ctx.UserValue("ApiKey"))
+	MaxPages := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("MaxPages")))
+	OtxEnabled := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("OtxEnabled")))
+	Gconf := SuriStructs.LoadConfig()
+	Gconf.Otx.ApiKey = ApiKey
+	Gconf.Otx.MaxPages = MaxPages
+	Gconf.Otx.Enabled = OtxEnabled
+	SuriStructs.SaveConfig(Gconf)
+	OutTrue(ctx)
 }
 func IfaceState(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {

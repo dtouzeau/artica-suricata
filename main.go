@@ -3,6 +3,7 @@ package main
 import (
 	"LogForward"
 	"RESTApi"
+	"SuriStructs"
 	"flag"
 	"fmt"
 	"futils"
@@ -34,8 +35,11 @@ var cmduninstallsuricata = flag.Bool("uninstall-ids", false, "Uninstall the IDS 
 var cmdstatussuricata = flag.Bool("status-ids", false, "Status of the IDS service")
 var cmdFixDuplicatesssuricata = flag.Bool("duplicates-ids", false, "Fix duplicate rules in IDS")
 var cmdPFRing = flag.Bool("pf-ring", false, "Verify PF RING Configration for IDS")
+var CMDSuricataLUpdate = flag.Bool("updates", false, "Updates Suricata - scheduled")
 var CMDSuricataUpdates = flag.Bool("suricata-updates", false, "Updates Suricata")
 var CMDSuricataSock = flag.String("suricata-sock", "", "Send command to suricata socket")
+var CMDParseRules = flag.Bool("suricata-rules", false, "Parse rules from directory and inject them into database")
+var CMDOtx = flag.Bool("otx", false, "Get rules from OTX")
 
 func main() {
 
@@ -59,6 +63,7 @@ func main() {
 		log.Error().Msgf("[START]: Load timezone failed: %v", err)
 	}
 	initZerolog()
+	ParseCmdLines()
 
 	OldPid := futils.GetPIDFromFile(PidFile)
 	if futils.ProcessExists(OldPid) {
@@ -86,6 +91,9 @@ func main() {
 		suricata.LoadClassifications(false)
 	}()
 	log.Info().Msgf("%v Starting version [%v]", futils.GetCalleRuntime(), version)
+	df := SuriStructs.LoadConfig()
+	df.Version = version
+	SuriStructs.SaveConfig(df)
 
 	MainCron = cron.New()
 	go LogForward.Start()
@@ -137,6 +145,9 @@ func main() {
 
 		case <-usr1Chan:
 			log.Info().Msg(fmt.Sprintf("Received USR1 signal."))
+			df := SuriStructs.LoadConfig()
+			df.Version = version
+			SuriStructs.SaveConfig(df)
 
 		case <-usr2Chan:
 			log.Info().Msg(fmt.Sprintf("Received USR2 signal."))
