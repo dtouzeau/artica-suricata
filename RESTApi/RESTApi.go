@@ -1,6 +1,7 @@
 package RESTApi
 
 import (
+	"LogForward"
 	"SuriStructs"
 	"Update"
 	"context"
@@ -79,8 +80,10 @@ func GlobalStatus(ctx *fasthttp.RequestCtx) {
 	var data struct {
 		Status bool                   `json:"Status"`
 		Error  string                 `json:"Error"`
+		Alerts int64                  `json:"Alerts"`
 		Info   SuriStructs.SuriDaemon `json:"Info"`
 	}
+	data.Alerts = LogForward.AlertsCount
 	data.Status = true
 	data.Info = SuriStructs.LoadConfig()
 	jsonBytes, _ := json.MarshalIndent(data, "", "  ")

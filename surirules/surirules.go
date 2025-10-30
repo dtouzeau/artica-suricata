@@ -1,6 +1,7 @@
 package surirules
 
 import (
+	"SqliteConns"
 	"bufio"
 	"database/sql"
 	"fmt"
@@ -45,6 +46,38 @@ type Rule struct {
 // The schema is created/updated if needed.
 // - rules.sid is UNIQUE (multiple NULLs allowed by SQLite)
 // - On sid conflict, the rule is updated and options are re-inserted (no dedupe of options)
+
+func parseEnableds() map[int]int {
+	db, err := SqliteConns.SuricataRulesConnectRO()
+	if err != nil {
+		log.Error().Msgf("%v open sqlite: %v", futils.GetCalleRuntime(), err)
+		return map[int]int{}
+	}
+	defer func(db *sql.DB) {
+		_ = db.Close()
+	}(db)
+	Query := "SELECT sid,enabled FROM rules"
+	rows, err := db.Query(Query)
+	if err != nil {
+		log.Error().Msgf("%v:%v %v", futils.GetCalleRuntime(), Query, err.Error())
+		return map[int]int{}
+	}
+	defer func(rows *sql.Rows) {
+		_ = rows.Close()
+	}(rows)
+
+	res := make(map[int]int)
+	for rows.Next() {
+		var sid, enabled int
+		err := rows.Scan(&sid, &enabled)
+		if err != nil {
+			continue
+		}
+		res[sid] = enabled
+	}
+	return res
+}
+
 func ImportSuricataRulesToSQLite() error {
 	dbPath := "/home/artica/SQLITE/suricata-rules.db"
 	futils.CreateDir("/home/artica/SQLITE")
@@ -61,18 +94,25 @@ func ImportSuricataRulesToSQLite() error {
 		ruleFiles = append(ruleFiles, RootPath+"/"+sFile)
 	}
 
-	db, err := sql.Open("sqlite3", dbPath)
+	db, err := SqliteConns.SuricataRulesConnectRW()
 	if err != nil {
+		log.Error().Msgf("%v open sqlite: %v", futils.GetCalleRuntime(), err)
 		return fmt.Errorf("open sqlite: %w", err)
 	}
-	defer db.Close()
+	defer func(db *sql.DB) {
+		_ = db.Close()
+	}(db)
 
 	if err := initSchema(db); err != nil {
 		return err
 	}
 
 	futils.ChownFile(dbPath, "www-data", "www-data")
+	MemConf := parseEnableds()
 	_, err = db.Exec("DELETE FROM rules WHERE source_file='otx_file_rules.rules'")
+	_, err = db.Exec("DELETE FROM rules WHERE source_file='threatfox_suricata.rules'")
+	_, err = db.Exec("DELETE FROM rules WHERE source_file='stamus-lateral.rules'")
+
 	if err != nil {
 		log.Error().Msgf("%v Delete otx_file_rules.rules: %v", futils.GetCalleRuntime(), err)
 	}
@@ -140,8 +180,16 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	}
 
 	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit: %w", err)
+		return fmt.Errorf("%v commit: %w", futils.GetCalleRuntime(), err)
 	}
+
+	for sid, enabled := range MemConf {
+		_, err := db.Exec(`UPDATE rules SET enabled=? WHERE sid=?`, enabled, sid)
+		if err != nil {
+			log.Error().Msgf("%v Update sid=%d enabled=%d: %v", futils.GetCalleRuntime(), sid, enabled, err)
+		}
+	}
+
 	return nil
 }
 

@@ -17,6 +17,7 @@ import (
 	"sockets"
 	"strings"
 	"suricata/SuricataTools"
+	"surirules"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -122,32 +123,41 @@ func Update() error {
 	final := false
 	_ = AbuseCh(false)
 	if NewEmergingRulesMD5 == CurrentEmergingRulesMD5 {
-		notifs.BuildProgress(40, "{downloading} IP Reputation 1/7", ProgressF)
+		notifs.BuildProgress(40, "{downloading} IP Reputation 1/9", ProgressF)
 		if ipreputationAlienvault() {
 			final = true
 		}
-		notifs.BuildProgress(45, "{downloading} IP Reputation 2/7", ProgressF)
+		notifs.BuildProgress(45, "{downloading} IP Reputation 2/9", ProgressF)
 		if ipreputationEmergingThreatsPro() {
 			final = true
 		}
-		notifs.BuildProgress(50, "{downloading} IP Reputation 3/7", ProgressF)
+		notifs.BuildProgress(50, "{downloading} IP Reputation 3/9", ProgressF)
 		if ipreputationFirehol1() {
 			final = true
 		}
-		notifs.BuildProgress(55, "{downloading} IP Reputation 4/7", ProgressF)
+		notifs.BuildProgress(55, "{downloading} IP Reputation 4/9", ProgressF)
 		if ipreputationUsom() {
 			final = true
 		}
-		notifs.BuildProgress(60, "{downloading} IP Reputation 5/7", ProgressF)
+		notifs.BuildProgress(60, "{downloading} IP Reputation 5/9", ProgressF)
 		if ipreputationBlocklistDeStrongips() {
 			final = true
 		}
-		notifs.BuildProgress(65, "{downloading} IP Reputation 6/7", ProgressF)
+		notifs.BuildProgress(65, "{downloading} IP Reputation 6/9", ProgressF)
 		if ipreputationCibadguys() {
 			final = true
 		}
-		notifs.BuildProgress(66, "{downloading} IP AlienVault data feeds 7/7", ProgressF)
+		notifs.BuildProgress(66, "{downloading} IP AlienVault data feeds 7/9", ProgressF)
 		if Otx.Run() {
+			final = true
+		}
+
+		notifs.BuildProgress(67, "{downloading} threat fox Abuse CH 8/9", ProgressF)
+		if threatfoxAbuseCH() {
+			final = true
+		}
+		notifs.BuildProgress(67, "{downloading} Stamus Network rules 9/9", ProgressF)
+		if stamusNetworks() {
 			final = true
 		}
 
@@ -236,6 +246,8 @@ func AbuseCh(only bool) error {
 func buildFinal() error {
 
 	tmpDir := futils.TEMPDIR()
+	_ = surirules.ImportSuricataRulesToSQLite()
+
 	err, disabledSignatures := SuricataTools.GetDisabledSignatures()
 	if err != nil {
 		return err
@@ -294,10 +306,7 @@ func ipreputationCibadguys() bool {
 		return false
 	}
 	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-
-		}
+		_ = file.Close()
 	}(file)
 
 	outputPath := filepath.Join(iprepDir, "cibadguys.list")
@@ -307,10 +316,7 @@ func ipreputationCibadguys() bool {
 		return false
 	}
 	defer func(outputFile *os.File) {
-		err := outputFile.Close()
-		if err != nil {
-
-		}
+		_ = outputFile.Close()
 	}(outputFile)
 
 	scanner := bufio.NewScanner(file)
@@ -339,7 +345,7 @@ func ipreputationBlocklistDeStrongips() bool {
 		return false
 	}
 
-	oldMD5 := sockets.GET_INFO_STR("blocklist_de_strongips.reputation") // Replace with your actual implementation
+	oldMD5 := sockets.GET_INFO_STR("blocklist_de_strongips.reputation")
 	currentMD5 := futils.MD5File(targetPath)
 
 	if oldMD5 == currentMD5 {
@@ -354,10 +360,7 @@ func ipreputationBlocklistDeStrongips() bool {
 		return false
 	}
 	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-
-		}
+		_ = file.Close()
 	}(file)
 
 	outputPath := filepath.Join(iprepDir, "blocklist_de_strongips.list")
@@ -367,10 +370,7 @@ func ipreputationBlocklistDeStrongips() bool {
 		return false
 	}
 	defer func(outputFile *os.File) {
-		err := outputFile.Close()
-		if err != nil {
-
-		}
+		_ = outputFile.Close()
 	}(outputFile)
 
 	scanner := bufio.NewScanner(file)
@@ -391,7 +391,7 @@ func ipreputationBlocklistDeStrongips() bool {
 		}
 	}
 	_ = os.Remove(targetPath)
-	sockets.SET_INFO_STR("blocklist_de_strongips.reputation", currentMD5) // Replace with your actual implementation
+	sockets.SET_INFO_STR("blocklist_de_strongips.reputation", currentMD5)
 	return true
 }
 func ipreputationUsom() bool {
@@ -399,7 +399,7 @@ func ipreputationUsom() bool {
 	tempDir := os.TempDir()
 	targetPath := filepath.Join(tempDir, "usom_ip_list.txt")
 
-	notifs.BuildProgress(56, "{downloading} IP Reputation 4/7", ProgressF)
+	notifs.BuildProgress(56, "{downloading} IP Reputation 4/9", ProgressF)
 	if !httpclient.DownloadFile(uri, targetPath) {
 		log.Error().Msgf("%v Unable to download reputation file", futils.GetCalleRuntime())
 		return false
@@ -424,7 +424,7 @@ func ipreputationUsom() bool {
 
 		}
 	}(file)
-	notifs.BuildProgress(57, "{downloading} IP Reputation 4/7", ProgressF)
+	notifs.BuildProgress(57, "{downloading} IP Reputation 4/9", ProgressF)
 	outputPath := filepath.Join(iprepDir, "usom.list")
 	outputFile, err := os.Create(outputPath)
 	if err != nil {
@@ -439,7 +439,7 @@ func ipreputationUsom() bool {
 	}(outputFile)
 
 	scanner := bufio.NewScanner(file)
-	notifs.BuildProgress(58, "{downloading} IP Reputation 4/7", ProgressF)
+	notifs.BuildProgress(58, "{downloading} IP Reputation 4/9", ProgressF)
 	re := regexp.MustCompile(`^([0-9\.]+)`) // Regex to match IP addresses
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -450,7 +450,7 @@ func ipreputationUsom() bool {
 	}
 
 	_ = os.Remove(targetPath)
-	notifs.BuildProgress(59, "{downloading} IP Reputation 4/7", ProgressF)
+	notifs.BuildProgress(59, "{downloading} IP Reputation 4/9", ProgressF)
 	sockets.SET_INFO_STR("usom.reputation", currentMD5)
 	return true
 }
@@ -642,3 +642,55 @@ func ipreputationFirehol1() bool {
 
 	return true
 }
+func threatfoxAbuseCH() bool {
+	uri := "https://threatfox.abuse.ch/downloads/threatfox_suricata.rules"
+	tempDir := futils.TEMPDIR()
+	targetPath := filepath.Join(tempDir, "threatfox_suricata.rules")
+
+	if !httpclient.DownloadFile(uri, targetPath) {
+		log.Error().Msgf("%v Unable to download reputation file", futils.GetCalleRuntime())
+		return false
+	}
+	oldMD5 := sockets.GET_INFO_STR("threatfox_suricata.rules")
+	currentMD5 := futils.MD5File(targetPath)
+
+	if oldMD5 == currentMD5 {
+		_ = os.Remove(targetPath)
+		return false
+	}
+	sockets.SET_INFO_STR("threatfox_suricata.rules", currentMD5)
+	futils.CopyFile(targetPath, "/etc/suricata/rules/threatfox_suricata.rules")
+	return true
+
+}
+func stamusNetworks() bool {
+	uri := "https://ti.stamus-networks.io/open/stamus-lateral-rules-checksum.txt"
+	tempDir := futils.TEMPDIR()
+	targetPath := filepath.Join(tempDir, "stamus-lateral-rules-checksum.txt")
+
+	if !httpclient.DownloadFile(uri, targetPath) {
+		log.Error().Msgf("%v Unable to download reputation file", futils.GetCalleRuntime())
+		return false
+	}
+	oldMD5 := sockets.GET_INFO_STR("stamus-lateral-rules")
+	currentMD5 := futils.FileGetContents(targetPath)
+	if oldMD5 == currentMD5 {
+		_ = os.Remove(targetPath)
+		return false
+	}
+	targetPath = filepath.Join(tempDir, "stamus-lateral-rules.tar.gz")
+	uri = "https://ti.stamus-networks.io/open/stamus-lateral-rules.tar.gz"
+	if !httpclient.DownloadFile(uri, targetPath) {
+		log.Error().Msgf("%v Unable to download reputation file", futils.GetCalleRuntime())
+		return false
+	}
+	err := compressor.UntarTgz(targetPath, "/etc/suricata")
+	if err != nil {
+		log.Error().Msgf("%v Unable to untar file", futils.GetCalleRuntime())
+		return false
+	}
+	sockets.SET_INFO_STR("stamus-lateral-rules", currentMD5)
+	return true
+}
+
+//

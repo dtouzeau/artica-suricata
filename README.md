@@ -10,4 +10,9 @@ Whether it’s malware, C2 traffic, or zero-day exploitation attempts, Suricata 
 
 This engine is a service managed through the **[Artica Web Console](https://github.com/dtouzeau/Artica-v4.50)**
 ).
-It’s built directly into Artica Appliances and **ISO images**, which you can download from https://artica.systems/
+# Installation
+It’s built directly into Artica Appliances and **[ISO images](https://artica.systems/)**, which you can download from https://artica.systems/
+
+These Debian-based ISO images (10, 12, 13) include the Suricata 8.x engine (and soon 9.x). They let you install a complete system on a virtual or physical machine, with full Linux and Suricata management through a web interface. 
+
+The installed system is open, and you can access it via Unix console or SSH.

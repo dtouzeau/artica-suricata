@@ -47,8 +47,9 @@ const (
 )
 
 var (
-	Workers   = runtime.GOMAXPROCS(0)
-	QueueSize = 10_000
+	Workers     = runtime.GOMAXPROCS(0)
+	QueueSize   = 10_000
+	AlertsCount int64
 )
 
 /* =========================
@@ -68,6 +69,33 @@ type HTTPInfo struct {
 	Protocol        string `json:"protocol"` // e.g. "HTTP/1.1"
 	Status          int    `json:"status"`   // 404
 	Length          int    `json:"length"`   // 196
+}
+type DNSQuery struct {
+	RRName string `json:"rrname"`
+	RRType string `json:"rrtype"`
+}
+
+type DNSAnswer struct {
+	RRName string `json:"rrname"`
+	RRType string `json:"rrtype"`
+	TTL    int    `json:"ttl"`
+	RData  string `json:"rdata"`
+}
+type DNSEntry struct {
+	Version int    `json:"version"` // 3
+	Type    string `json:"type"`    // "response"
+	TxID    int    `json:"tx_id"`
+	ID      int    `json:"id"`
+	Flags   string `json:"flags"` // "8180"
+	QR      bool   `json:"qr"`
+	RD      bool   `json:"rd"`
+	RA      bool   `json:"ra"`
+	Opcode  int    `json:"opcode"`
+	Rcode   string `json:"rcode"` // "NOERROR"
+
+	Queries []DNSQuery          `json:"queries"`
+	Answers []DNSAnswer         `json:"answers"`
+	Grouped map[string][]string `json:"grouped"` // e.g. {"A": ["66.249.65.174"]}
 }
 
 type metrics struct {
@@ -111,7 +139,7 @@ type EveEvent struct {
 	Alert        *EveAlert       `json:"alert,omitempty"`
 	HTTP         *HTTPInfo       `json:"http,omitempty"`
 	TLS          json.RawMessage `json:"tls,omitempty"`
-	DNS          json.RawMessage `json:"dns,omitempty"`
+	DNS          *DNSEntry       `json:"dns,omitempty"`
 	Flow         json.RawMessage `json:"flow,omitempty"`
 	UnhandledRaw json.RawMessage `json:"-"`
 	Count        int             `json:"Count"`
@@ -179,18 +207,26 @@ func LogAllEventsAndClear(clear bool) {
 	for k, ev := range snap {
 		b, err := json.Marshal(ev)
 		if err != nil {
-			log.Warn().Msgf("marshal event %s: %v", k, err)
+			log.Warn().Msgf("%v marshal event %s: %v", futils.GetCalleRuntime(), k, err)
 			continue
 		}
 		ev.ProxyName = ProxyName
-		log.Info().Msgf("EVE[%s]: %s", k, string(b))
+		if ev.EventType == "alert" {
+			AlertsCount++
+			injectToDB(db, ev)
+			continue
+		}
+
+		log.Info().Msgf("%v EVE[%s]: %s", futils.GetCalleRuntime(), k, string(b))
 	}
 }
 func injectToDB(db *sql.DB, m *EveEvent) bool {
 
+	sTime := futils.TimeStampToDateStr(futils.StrToInt64(m.Timestamp))
+
 	_, err := db.Exec(`INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES 
 		($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
-		m.Timestamp, m.SrcIP, m.DstIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
+		sTime, m.SrcIP, m.DstIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
 	if err == nil {
 		return true
 	}
@@ -272,12 +308,12 @@ func handleEvent(ev *EveEvent) {
 	Count := ev.Count
 	h, _, err := eventHash(ev)
 	if err != nil {
-		log.Warn().Msgf("event hash error: %v", err)
+		log.Warn().Msgf("%v event hash error: %v", futils.GetCalleRuntime(), err)
 		return
 	}
 
 	if len(ev.EventType) == 0 {
-		log.Warn().Msgf("event type missing: %v", err)
+		log.Warn().Msgf("%v event type missing: %v", futils.GetCalleRuntime(), err)
 		return
 	}
 
@@ -351,7 +387,7 @@ func Start() {
 				return
 			case <-t.C:
 				a, d, ok, er, c := m.snapshot()
-				log.Info().Msgf("metrics: accepted=%d dropped=%d parsed_ok=%d parsed_err=%d active_conns=%d", a, d, ok, er, c)
+				log.Info().Msgf("%v metrics: accepted=%d dropped=%d parsed_ok=%d parsed_err=%d active_conns=%d", futils.GetCalleRuntime(), a, d, ok, er, c)
 			}
 		}
 	}()
@@ -404,7 +440,7 @@ func Start() {
 	time.Sleep(300 * time.Millisecond) // let in-flight scanner writes finish
 	close(queue)
 	wg.Wait()
-	log.Info().Msg("bye.")
+	log.Info().Msgf("%v bye.", futils.GetCalleRuntime())
 }
 func handleConn(ctx context.Context, c net.Conn, queue chan<- job, m *metrics) error {
 	sc := bufio.NewScanner(c)
