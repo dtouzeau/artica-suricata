@@ -1,3 +1,5 @@
+
+[<img src="https://suricata.io/wp-content/uploads/2022/01/Logo-SuricataFinal-1-translucent.png" align="right" width="120">](https://suricata.io)
 ## Deep network visibility, powered by Suricata.
 
 Artica integrates the Suricata IDS engine directly inside your server, giving you enterprise-grade intrusion detection without the complexity.
