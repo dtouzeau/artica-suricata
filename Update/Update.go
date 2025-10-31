@@ -18,16 +18,30 @@ import (
 	"strings"
 	"suricata/SuricataTools"
 	"surirules"
+	"sync"
 	"time"
 
 	"github.com/rs/zerolog/log"
 )
 
+var zmutex sync.Mutex
+
 const iprepDir = "/etc/suricata/iprep"
 const ProgressF = "suricata-update.progress"
+const Pidtime = "/etc/artica-postfix/pids/exec.suricata.updates.php.update.time"
+
+func TimeToUpdate() int64 {
+
+	if !futils.FileExists(Pidtime) || !futils.FileExists("/etc/artica-postfix/settings/Daemons/CurrentEmergingRulesMD5") {
+		return 10000000
+	}
+	return int64(futils.FileTimeMin(Pidtime))
+}
 
 func Run() {
-
+	zmutex.Lock()
+	defer zmutex.Unlock()
+	futils.CreateDir("/etc/artica-postfix/pids")
 	pidtime := "/etc/artica-postfix/pids/exec.suricata.updates.php.update.time"
 	EnableSuricata := sockets.GET_INFO_INT("EnableSuricata")
 	if EnableSuricata == 0 {
@@ -37,20 +51,17 @@ func Run() {
 	if SuricataUpdateInterval == 0 {
 		SuricataUpdateInterval = 1440
 	}
-	SuricataUpdateInterval = SuricataUpdateInterval - 1
-	if !futils.FileExists("/etc/artica-postfix/settings/Daemons/CurrentEmergingRulesMD5") {
-		futils.TouchFile(pidtime)
-		_ = Update()
+	if SuricataUpdateInterval > 518400 {
 		return
 	}
 
-	TimeMin := futils.FileTimeMin(pidtime)
-	if int64(TimeMin) < SuricataUpdateInterval {
+	TimeMin := TimeToUpdate()
+	if TimeMin < SuricataUpdateInterval {
 		log.Debug().Msgf("%v %v < %v ABORTING", futils.GetCalleRuntime(), TimeMin, SuricataUpdateInterval)
 		return
 	}
 
-	futils.TouchFile(pidtime)
+	defer futils.TouchFile(pidtime)
 	_ = Update()
 	_ = OpenInfoSecFoundation()
 

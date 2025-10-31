@@ -259,7 +259,6 @@ func dumpCounters() (string, string, error) {
 
 	return stdout.String(), stderr.String(), nil
 }
-
 func DumpStats() (SuricataStats, string) {
 	var Res SuricataStats
 	out, serr, err := dumpCounters()
@@ -284,7 +283,6 @@ func DumpStats() (SuricataStats, string) {
 	}
 	return Res, out
 }
-
 func UnixCommand(order string) (error, string) {
 	socketPath := "/var/run/suricata/suricata.sock"
 	conn, err := net.Dial("unix", socketPath)

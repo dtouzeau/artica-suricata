@@ -1,6 +1,8 @@
 package LogForward
 
 import (
+	"SuriStructs"
+	"SuriTables"
 	"apostgres"
 	"bufio"
 	"context"
@@ -12,6 +14,7 @@ import (
 	"fmt"
 	"futils"
 	"io"
+	"ipclass"
 	"net"
 	"os"
 	"os/signal"
@@ -43,7 +46,6 @@ const (
 
 	// How long to wait when queue is full before dropping a line
 	QueueBlockTimeout = 500 * time.Millisecond
-	QueueFailed       = "/home/suricata/queue-failed"
 )
 
 var (
@@ -224,13 +226,39 @@ func injectToDB(db *sql.DB, m *EveEvent) bool {
 
 	sTime := futils.TimeStampToDateStr(futils.StrToInt64(m.Timestamp))
 
+	if !ipclass.IsIPAddress(m.DstIP) {
+		m.DstIP = "0.0.0.0"
+	}
+	if m.DstPort == nil {
+		m.DstPort = new(int)
+	}
+
 	_, err := db.Exec(`INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES 
 		($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
 		sTime, m.SrcIP, m.DstIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
 	if err == nil {
 		return true
 	}
+
+	sqlog := fmt.Sprintf("INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES ('%v','%v','%v','%v','%v','%v','%v','%v','%v') ON CONFLICT DO NOTHING", sTime, m.SrcIP, m.DstIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
+
 	log.Error().Msgf("%v Error inserting into database: %v", futils.GetCalleRuntime(), err)
+	log.Error().Msg(sqlog)
+	Cfg := SuriStructs.LoadConfig()
+
+	if strings.Contains(err.Error(), "does not exist") {
+		SuriTables.Check()
+		_, err = db.Exec(`INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES 
+		($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
+			sTime, m.SrcIP, m.DstIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
+		if err == nil {
+			return true
+		}
+	}
+
+	if Cfg.UseQueueFailed == 0 {
+		return true
+	}
 
 	b, err := json.Marshal(m)
 	if err != nil {
@@ -239,11 +267,12 @@ func injectToDB(db *sql.DB, m *EveEvent) bool {
 	}
 	// save into disk in order to return back later ( see cron function )
 	sFname := futils.Md5String(string(b))
-	fname := "/home/suricata/queue-failed/" + sFname + ".json"
+	fname := Cfg.QueueFailed + "/" + sFname + ".json"
 	if futils.FileExists(fname) {
 		return false
 	}
-	futils.CreateDir(QueueFailed)
+
+	futils.CreateDir(Cfg.QueueFailed)
 	err = futils.FilePutContents(fname, string(b))
 	if err != nil {
 		log.Error().Msgf("%v Error writing to file: %v", futils.GetCalleRuntime(), err)
@@ -252,8 +281,31 @@ func injectToDB(db *sql.DB, m *EveEvent) bool {
 	return false
 
 }
+func CleanQueueFailed() {
+	Cfg := SuriStructs.LoadConfig()
+	if len(Cfg.QueueFailed) < 4 {
+		log.Debug().Msgf("%v QueueFailed path is too short: %v", futils.GetCalleRuntime(), Cfg.QueueFailed)
+		return
+	}
+	if !futils.IsDirDirectory(Cfg.QueueFailed) {
+		log.Debug().Msgf("%v QueueFailed path is not a directory: %v", futils.GetCalleRuntime(), Cfg.QueueFailed)
+		return
+	}
+	files := futils.DirectoryScan(Cfg.QueueFailed)
+	for _, sfile := range files {
+		fullPath := Cfg.QueueFailed + "/" + sfile
+		log.Debug().Msgf("%v remove %v", futils.GetCalleRuntime(), fullPath)
+		futils.DeleteFile(fullPath)
+	}
+
+}
 
 func ParseQueueFailed() {
+	Cfg := SuriStructs.LoadConfig()
+	if Cfg.UseQueueFailed == 0 {
+		CleanQueueFailed()
+		return
+	}
 
 	db, err := apostgres.SQLConnect()
 	if err != nil {
@@ -264,12 +316,12 @@ func ParseQueueFailed() {
 		_ = db.Close()
 	}(db)
 
-	if !futils.IsDirDirectory(QueueFailed) {
+	if !futils.IsDirDirectory(Cfg.QueueFailed) {
 		return
 	}
-	files := futils.DirectoryScan(QueueFailed)
+	files := futils.DirectoryScan(Cfg.QueueFailed)
 	for _, sfile := range files {
-		fullPath := QueueFailed + "/" + sfile
+		fullPath := Cfg.QueueFailed + "/" + sfile
 		if !strings.HasSuffix(sfile, ".json") {
 			futils.DeleteFile(fullPath)
 			continue

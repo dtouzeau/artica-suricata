@@ -1,24 +1,27 @@
 package main
 
 import (
+	"DashBoard"
 	"LogForward"
 	"Update"
 	"logrotate"
 	"suricata"
-	"suricata/SuricataDashboard"
-	"suricata/suricataConfig"
+	"surirules"
 )
+
+func Each2Minutes() {
+	Update.Run()
+}
 
 func Each5Minutes() {
 	LogForward.ParseQueueFailed()
+	surirules.CheckRulesCounter()
 }
 func Each15Minutes() {
-	suricataConfig.SuricataDashboard()
+	DashBoard.Build()
 	logrotate.RotateEveJsonByPeriod()
 }
 func Each10Minutes() {
-	Update.Run()
-	SuricataDashboard.CountOfSuricata()
 
 }
 func Each12Hours() {

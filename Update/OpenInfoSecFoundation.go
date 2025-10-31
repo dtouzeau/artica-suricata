@@ -1,6 +1,7 @@
 package Update
 
 import (
+	"Reconfigure"
 	"compressor"
 	"fmt"
 	"futils"
@@ -9,7 +10,6 @@ import (
 	"os"
 	"sockets"
 	"strings"
-	"suricata/SuricataTools"
 	"surirules"
 
 	"github.com/rs/zerolog/log"
@@ -188,10 +188,9 @@ func OpenInfoSecFoundation() error {
 
 	if UPDATED {
 		notifs.SquidAdminMysql(1, fmt.Sprintf("{success} updated %d files signatures", UpdatedCount), "", futils.GetCalleRuntime(), 178)
-		SuricataTools.FixDuplicateRules()
-		SuricataTools.Reload()
 		_ = surirules.ImportSuricataRulesToSQLite()
 		surirules.Classifications()
+		Reconfigure.BuildRules()
 	}
 
 	return nil

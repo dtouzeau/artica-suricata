@@ -2,6 +2,8 @@ package surirules
 
 import (
 	"SqliteConns"
+	"SuriStructs"
+	"SuricataACLS"
 	"bufio"
 	"database/sql"
 	"fmt"
@@ -18,8 +20,10 @@ import (
 )
 
 var sidRegex = regexp.MustCompile(` sid:([0-9]+)`)
+var sidRegex1 = regexp.MustCompile(`;sid:([0-9]+);`)
 var classtypeRegex = regexp.MustCompile(` classtype:(.*?);`)
-var classtypeRegex2 = regexp.MustCompile(` iprep:.*?,(.*?),`)
+var classtypeRegex2 = regexp.MustCompile(`;classtype:(.*?);`)
+var classtypeRegex3 = regexp.MustCompile(` iprep:.*?,(.*?),`)
 
 type Rule struct {
 	Enabled   bool
@@ -88,7 +92,7 @@ func ImportSuricataRulesToSQLite() error {
 		if !strings.HasSuffix(sFile, ".rules") {
 			continue
 		}
-		if sFile == "local.rules" || sFile == "iprep.rules" || sFile == "emerging-retired.rules" {
+		if sFile == "local.rules" || sFile == "iprep.rules" || sFile == "emerging-retired.rules" || sFile == "Production.rules" {
 			continue
 		}
 		ruleFiles = append(ruleFiles, RootPath+"/"+sFile)
@@ -268,6 +272,10 @@ func importOneFile(
 			enabled = 0
 			raw = strings.TrimPrefix(raw, "#")
 		}
+		if strings.HasPrefix(raw, "# alert ") {
+			enabled = 0
+			raw = strings.TrimPrefix(raw, "# ")
+		}
 
 		// Entire line commented?
 		if strings.HasPrefix(raw, "#") || strings.HasPrefix(raw, "//") {
@@ -403,7 +411,44 @@ func importOneFile(
 	return nil
 }
 
-// --- parsing ---
+func CheckRulesCounter() {
+
+	db, err := SqliteConns.SuricataRulesConnectRW()
+	if err != nil {
+		log.Error().Msgf("%v open sqlite: %v", futils.GetCalleRuntime(), err)
+		return
+	}
+	defer func(db *sql.DB) {
+		_ = db.Close()
+	}(db)
+
+	gb := SuriStructs.LoadConfig()
+	err = db.QueryRow("SELECT COUNT(*) as tcount FROM rules").Scan(&gb.RulesCount)
+	if err != nil {
+		log.Error().Msgf("%v select rules count: %v", futils.GetCalleRuntime(), err)
+		return
+	}
+	err = db.QueryRow("SELECT COUNT(*) as tcount FROM rules WHERE enabled=1").Scan(&gb.ActiveRules)
+	if err != nil {
+		log.Error().Msgf("%v select rules count: %v", futils.GetCalleRuntime(), err)
+		return
+	}
+	acls := SuricataACLS.GetACLs()
+	for _, acl := range acls {
+		gb.RulesCount++
+		if acl.Enabled == 1 {
+			gb.ActiveRules++
+		}
+	}
+	SuriStructs.SaveConfig(gb)
+
+	if gb.RulesCount > 0 {
+		if len(gb.Categories) == 0 {
+			Classifications()
+		}
+	}
+
+}
 
 func parseRule(raw string) (Rule, error) {
 	r := Rule{Raw: raw}
@@ -490,6 +535,12 @@ func findSIdInrule(raw string) int {
 		sidInt := futils.StrToInt(sid)
 		return sidInt
 	}
+	sid = futils.RegexGroup1(sidRegex1, raw)
+	if len(sid) > 0 {
+		sidInt := futils.StrToInt(sid)
+		return sidInt
+	}
+
 	return 0
 }
 func findSClassTypeInrule(raw string) string {
@@ -498,6 +549,10 @@ func findSClassTypeInrule(raw string) string {
 		return sid
 	}
 	sid = futils.RegexGroup1(classtypeRegex2, raw)
+	if len(sid) > 0 {
+		return sid
+	}
+	sid = futils.RegexGroup1(classtypeRegex3, raw)
 	if len(sid) > 0 {
 		return "reputation"
 	}

@@ -49,6 +49,9 @@ func Parse() {
 			log.Debug().Msgf("%v %s %s = %s", futils.GetCalleRuntime(), uduniq, description, priority)
 			_, err := db.Exec(`INSERT INTO suricata_classifications (uduniq, shortname, description, priority) VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING`, uduniq, shortname, description, priority)
 			if err != nil {
+				if strings.Contains(err.Error(), "does not exist") {
+					return
+				}
 				log.Error().Msgf("%v Error inserting row into DB: %v", futils.GetCalleRuntime(), err)
 			}
 			_, err = db.Exec(`UPDATE suricata_classifications SET description=$1,priority=$2 WHERE shortname=$3`, description, priority, shortname)

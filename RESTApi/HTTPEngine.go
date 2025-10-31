@@ -90,6 +90,7 @@ func buildRouter() *router.Router {
 	r := router.New()
 	r.GET("/reload", logRequest(ReloadMe))
 	r.GET("/status", logRequest(GlobalStatus))
+	r.GET("/build/rules", logRequest(BuildRules))
 	r.GET("/suricata/install", logRequest(RestSuricataInstall))
 	r.GET("/suricata/uninstall", logRequest(RestSuricataUninstall))
 	r.GET("/suricata/restart", logRequest(RestSuricataRestart))
@@ -106,6 +107,7 @@ func buildRouter() *router.Router {
 	r.GET("/suricata/pfring-plugin", logRequest(restSuricataPfRingPluging))
 	r.GET("/debug/pprof/{profile:*}", logRequest(pprofhandler.PprofHandler))
 	r.GET("/otx/save/{ApiKey}/{MaxPages}/{OtxEnabled}", logRequest(OtxSave))
+	r.GET("/config/queue/{queuepath}/{enabled}", logRequest(SetQueueParams))
 
 	return r
 }

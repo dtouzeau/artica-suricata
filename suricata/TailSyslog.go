@@ -25,31 +25,6 @@ var SignaturesCache = cache.New(cache.NoExpiration, cache.NoExpiration)
 var SignaturesFirewallCache = cache.New(cache.NoExpiration, cache.NoExpiration)
 var CountThreats int
 
-type PFringInfo struct {
-	Enable                    int    `json:"enable"`
-	Filename                  string `json:"filename"`
-	Alias                     string `json:"alias"`
-	Version                   string `json:"version"`
-	Description               string `json:"description"`
-	Author                    string `json:"author"`
-	License                   string `json:"license"`
-	SrcVersion                string `json:"srcversion"`
-	Depends                   string `json:"depends"`
-	Retpoline                 string `json:"retpoline"`
-	Name                      string `json:"name"`
-	Vermagic                  string `json:"vermagic"`
-	MinNumSlots               string `json:"min_num_slots"`
-	PerfectRulesHashSize      string `json:"perfect_rules_hash_size"`
-	EnableTxCapture           string `json:"enable_tx_capture"`
-	EnableFragCoherence       string `json:"enable_frag_coherence"`
-	EnableIPDefrag            string `json:"enable_ip_defrag"`
-	KeepVlanOffload           string `json:"keep_vlan_offload"`
-	QuickMode                 string `json:"quick_mode"`
-	ForceRingLock             string `json:"force_ring_lock"`
-	EnableDebug               string `json:"enable_debug"`
-	TransparentModeDeprecated string `json:"transparent_mode"`
-}
-
 type Alert struct {
 	Action      string `json:"action"`
 	Gid         int    `json:"gid"`

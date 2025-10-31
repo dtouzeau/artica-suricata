@@ -15,7 +15,6 @@ use (
 	csqlite
 	RESTApi
 	suricata/SuricataTools
-	suricata/suricataConfig
 	suricata/SuricataDashboard
 	SuriStructs
 	surisock
@@ -38,5 +37,10 @@ use (
 	Classifications
 	Update
 	Update/Otx
+	SuriTables
+	SuriConf
+	DashBoard
+	Reconfigure
+	PFRing
 
 )

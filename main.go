@@ -4,6 +4,7 @@ import (
 	"LogForward"
 	"RESTApi"
 	"SuriStructs"
+	"SuriTables"
 	"flag"
 	"fmt"
 	"futils"
@@ -12,7 +13,7 @@ import (
 	"runtime/debug"
 	"sockets"
 	"suricata"
-	"suricata/suricataConfig"
+	"surirules"
 	"syscall"
 	"time"
 
@@ -40,6 +41,8 @@ var CMDSuricataUpdates = flag.Bool("suricata-updates", false, "Updates Suricata"
 var CMDSuricataSock = flag.String("suricata-sock", "", "Send command to suricata socket")
 var CMDParseRules = flag.Bool("suricata-rules", false, "Parse rules from directory and inject them into database")
 var CMDOtx = flag.Bool("otx", false, "Get rules from OTX")
+var CMDCleanQueue = flag.Bool("clean-queue", false, "Destroy PostgreSQL queue failed")
+var CMDClassify = flag.Bool("classify", false, "Build json classification file")
 
 func main() {
 
@@ -99,7 +102,9 @@ func main() {
 	go LogForward.Start()
 	go RESTApi.Start()
 	go suricata.CheckStartup()
-	go suricataConfig.PatchTables()
+	go SuriTables.Check()
+	go surirules.CheckRulesCounter()
+	_, _ = MainCron.AddFunc("*/2 * * * *", Each2Minutes)
 	_, _ = MainCron.AddFunc("*/5 * * * *", Each5Minutes)
 	_, _ = MainCron.AddFunc("*/15 * * * *", Each15Minutes)
 	_, _ = MainCron.AddFunc("*/10 * * * *", Each10Minutes)
@@ -108,12 +113,13 @@ func main() {
 	if SquidRotateOnlySchedule == 1 {
 		LogRotateH := sockets.GET_INFO_STR("LogRotateH")
 		LogRotateM := sockets.GET_INFO_STR("LogRotateM")
-		zpattern := fmt.Sprintf("%d %d * * *", LogRotateM, LogRotateH)
+		zpattern := fmt.Sprintf("%d %d * * *", futils.StrToInt(LogRotateM), futils.StrToInt(LogRotateH))
 		_, err = MainCron.AddFunc(zpattern, EachRotation)
 		if err != nil {
 			log.Err(err).Msg(fmt.Sprintf("Unable to create cron tasks for EachRotation (%v) %v", zpattern, err.Error()))
 		}
 	}
+	MainCron.Start()
 
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2, syscall.SIGTERM)
@@ -148,6 +154,7 @@ func main() {
 			df := SuriStructs.LoadConfig()
 			df.Version = version
 			SuriStructs.SaveConfig(df)
+			go surirules.CheckRulesCounter()
 
 		case <-usr2Chan:
 			log.Info().Msg(fmt.Sprintf("Received USR2 signal."))
@@ -157,8 +164,8 @@ func main() {
 			initZerolog()
 			MainCron.Stop()
 			MainCron.Start()
-			suricataConfig.CheckTables()
-			suricataConfig.PatchTables()
+			SuriTables.Check()
+			go surirules.CheckRulesCounter()
 			_ = suricata.GetVersion()
 
 		}

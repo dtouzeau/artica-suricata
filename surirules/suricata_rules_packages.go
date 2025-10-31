@@ -29,7 +29,7 @@ func Classifications() {
 	defer func(rows *sql.Rows) {
 		_ = rows.Close()
 	}(rows)
-
+	GlobalConfig := SuriStructs.LoadConfig()
 	Main := make(map[string]int)
 	for rows.Next() {
 		var SourceFile string
@@ -39,13 +39,16 @@ func Classifications() {
 			log.Error().Msgf("%v: Error while scanning row %v", futils.GetCalleRuntime(), err.Error())
 			continue
 		}
+		log.Debug().Msgf("%v %v ---> %d", futils.GetCalleRuntime(), SourceFile, zcount)
+		GlobalConfig.Families[SourceFile] = zcount
 		Main[SourceFile] = zcount
 	}
 
 	if len(Main) == 0 {
+		log.Error().Msgf("%v: No rules found", futils.GetCalleRuntime())
 		return
 	}
-
+	SuriStructs.SaveConfig(GlobalConfig)
 	_ = rows.Close()
 	Query = "SELECT count(*) as tcount,classtype FROM rules GROUP BY classtype"
 	rows, err = db.Query(Query)
@@ -56,7 +59,7 @@ func Classifications() {
 	defer func(rows *sql.Rows) {
 		_ = rows.Close()
 	}(rows)
-	GlobalConfig := SuriStructs.LoadConfig()
+
 	for rows.Next() {
 		var classtype string
 		var zcount int
@@ -69,25 +72,12 @@ func Classifications() {
 	}
 	SuriStructs.SaveConfig(GlobalConfig)
 
-	_ = db.Close()
-	db, err = SqliteConns.SuricataConnectRW()
-	if err != nil {
-		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		return
-	}
-	defer func(db *sql.DB) {
-		_ = db.Close()
-	}(db)
 	TotalCount := 0
 	for rulefile, count := range Main {
 		TotalCount = TotalCount + count
-		_, err = db.Exec(`INSERT OR IGNORE INTO suricata_rules_packages (rulefile,category,rulesnumber) VALUES(?,'ALL',?)`, rulefile, count)
+		GlobalConfig.Families[rulefile] = count
+
 	}
-	for rulefile, count := range Main {
-		TotalCount = TotalCount + count
-		_, err = db.Exec(`UPDATE suricata_rules_packages SET rulesnumber=? WHERE rulefile=?`, count, rulefile)
-	}
-	Global := SuriStructs.LoadConfig()
-	Global.RulesCount = TotalCount
-	SuriStructs.SaveConfig(Global)
+	GlobalConfig.RulesCount = TotalCount
+	SuriStructs.SaveConfig(GlobalConfig)
 }

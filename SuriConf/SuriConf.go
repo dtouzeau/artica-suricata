@@ -1,8 +1,7 @@
-package suricataConfig
+package SuriConf
 
 import (
 	"BPFfilter"
-	"Classifications"
 	"PFRingIfaces"
 	"SqliteConns"
 	"apostgres"
@@ -22,14 +21,15 @@ import (
 	"strings"
 	"suricata/SuricataTools"
 
-	"github.com/leeqvip/gophp"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog/log"
 )
 
+const DumpRulesPF = "dumprules.progress"
+
 var ClassificationsRegex = regexp.MustCompile(`^config classification:\s+(.+?),(.+?),([0-9]+)`)
 
-func SuricataConfig() error {
+func Build() error {
 
 	if futils.IsDirDirectory("/etc/suricata/suricata") {
 		cp := futils.FindProgram("cp")
@@ -378,7 +378,18 @@ func SuricataConfig() error {
 	f = append(f, "rule-files:")
 	f = append(f, writePersoRule())
 	f = append(f, writeWhitelistRule())
-	f = append(f, classifications())
+	RulePath := "/etc/suricata/rules"
+	futils.CreateDir(RulePath)
+	f = append(f, " - Production.rules")
+	f = append(f, " - iprep.rules")
+	f = append(f, "")
+	f = append(f, "classification-file: /etc/suricata/classification.config")
+	f = append(f, "reference-config-file: /etc/suricata/reference.config")
+	f = append(f, "")
+	if !futils.FileExists("/etc/suricata/rules/Production.rules") {
+		futils.TouchFile("/etc/suricata/rules/Production.rules")
+	}
+
 	f = append(f, AllVars())
 	f = append(f, `# IP Reputation`)
 	f = append(f, `reputation-categories-file: /etc/suricata/iprep/categories.org`)
@@ -743,115 +754,6 @@ type SuriIfaces struct {
 	threads   int
 }
 
-func CheckTables() {
-	DisablePostGres := sockets.GET_INFO_INT("DisablePostGres")
-	if DisablePostGres == 1 {
-		return
-	}
-	db, err := apostgres.SQLConnect()
-	if err != nil {
-		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		return
-	}
-
-	defer func(db *sql.DB) {
-		_ = db.Close()
-	}(db)
-
-	tables := apostgres.ListTablesMem(db)
-	if !tables["suricata_classifications"] {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricata_classifications (ID SERIAL NOT NULL PRIMARY KEY, uduniq varchar(50) NOT NULL UNIQUE, shortname varchar(50) NOT NULL,description VARCHAR(128) NOT NULL,priority smallint NOT NULL)`)
-		if err != nil {
-			if strings.Contains(err.Error(), ".6432: connect: no such file or directory") {
-				log.Error().Msgf("%v Issue on PgBouncer, disable it", err.Error())
-				sockets.SET_INFO_INT("PgBouncerEnabled", 0)
-				return
-			}
-			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		}
-		sockets.DeleteTemp("PostgresTables")
-	}
-	if !tables["suricata_events"] {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricata_events (zDate timestamp,src_ip inet,dst_ip inet,dst_port INT NOT NULL,proto varchar(10) NOT NULL,severity smallint NOT NULL,signature BIGINT,proxyname VARCHAR(128),xcount BIGINT)`)
-		if err != nil {
-			if strings.Contains(err.Error(), "more connections allowed (max_client_conn)") {
-				notifs.SquidAdminMysql(1, "Stop REST-API service no more connections allowed (max_client_conn)", "", futils.GetCalleRuntime(), 794)
-				notifs.TosyslogGen(fmt.Sprintf("%v %v --> Stopping REST API", futils.GetCalleRuntime(), err.Error()), "postgres")
-				os.Exit(0)
-			}
-			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		}
-		sockets.DeleteTemp("PostgresTables")
-	}
-	if !tables["suricata_sig"] {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricata_sig (signature BIGINT PRIMARY KEY,description varchar(128),enabled smallint NOT NULL DEFAULT 1,firewall smallint NOT NULL DEFAULT 0,notify smallint NOT NULL DEFAULT 0 )`)
-		if err != nil {
-			if strings.Contains(err.Error(), "more connections allowed (max_client_conn)") {
-				notifs.SquidAdminMysql(1, "Stop REST-API service no more connections allowed (max_client_conn)", "", futils.GetCalleRuntime(), 794)
-				notifs.TosyslogGen(fmt.Sprintf("%v %v --> Stopping REST API", futils.GetCalleRuntime(), err.Error()), "postgres")
-				os.Exit(0)
-			}
-			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		}
-		sockets.DeleteTemp("PostgresTables")
-	}
-	if !tables["suricatajson"] {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricatajson( time_received VARCHAR(64), ipver VARCHAR(4),
-	srcip VARCHAR(40), dstip VARCHAR(40), protocol INTEGER, sp INTEGER, dp INTEGER,
-		http_uri TEXT, http_host TEXT, http_referer TEXT, filename TEXT, magic TEXT, state VARCHAR(32),
-		md5 VARCHAR(32), stored VARCHAR(32), size BIGINT,proxyname VARCHAR(128))`)
-		if err != nil {
-			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		}
-		sockets.DeleteTemp("PostgresTables")
-	}
-	if !tables["suricata_firewall"] {
-		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricata_firewall (ID SERIAL NOT NULL PRIMARY KEY, uduniq varchar(50) NOT NULL UNIQUE, zdate timestamp, signature BIGINT, src_ip inet, dst_port smallint NOT NULL, proto varchar(10) NOT NULL, xauto smallint NOT NULL DEFAULT 0, proxyname varchar(128) )`)
-		if err != nil {
-			if strings.Contains(err.Error(), "more connections allowed (max_client_conn)") {
-				notifs.SquidAdminMysql(1, "Stop REST-API service no more connections allowed (max_client_conn)", "", futils.GetCalleRuntime(), 794)
-				notifs.TosyslogGen(fmt.Sprintf("%v %v --> Stopping REST API", futils.GetCalleRuntime(), err.Error()), "postgres")
-				os.Exit(0)
-			}
-			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		}
-		sockets.DeleteTemp("PostgresTables")
-	}
-
-	if apostgres.IsDBClosed(db) {
-		log.Warn().Msgf("%v DB closed, reconnect", futils.GetCalleRuntime())
-		db, err = apostgres.SQLConnect()
-		if err != nil {
-			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-			return
-		}
-		defer func(db *sql.DB) {
-			_ = db.Close()
-		}(db)
-		if apostgres.IsDBClosed(db) {
-			log.Warn().Msgf("%v DB closed again.. reconnect", futils.GetCalleRuntime())
-			db, err = apostgres.SQLConnect()
-			if err != nil {
-				log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-				return
-			}
-
-		}
-	}
-
-	apostgres.CreateIndex(db, "suricata_firewall", "ikey", []string{"uduniq", "signature", "src_ip", "proxyname", "zdate", "xauto"})
-	apostgres.CreateIndex(db, "suricata_classifications", "ikey", []string{"uduniq", "shortname", "priority"})
-	apostgres.CreateIndex(db, "suricatajson", "PROXYNAMEi", []string{"proxyname"})
-	apostgres.CreateIndex(db, "suricatajson", "keyi", []string{"time_received", "ipver", "srcip", "dstip", "state"})
-
-	apostgres.CreateFieldInt(db, "suricata_sig", "firewall")
-	apostgres.CreateFieldInt(db, "suricata_sig", "notify")
-	apostgres.CreateIndex(db, "suricata_sig", "enabled", []string{"firewall", "notify", "enabled"})
-	apostgres.CreateIndex(db, "suricata_events", "PROXYNAMEi", []string{"proxyname"})
-	apostgres.CreateIndex(db, "suricata_events", "keyi", []string{"zDate", "src_ip", "dst_ip", "severity", "signature", "xcount"})
-	go Classifications.Parse()
-}
-
 func hyperScan() (bool, string) {
 	// Read the content of /proc/cpuinfo
 	file, err := os.Open("/proc/cpuinfo")
@@ -1006,127 +908,105 @@ func PatchTables() {
 
 }
 
-func classificationsDefaults() {
-
-	db, err := SqliteConns.SuricataConnectRW()
+func DumpRules() error {
+	db, err := SqliteConns.SuricataRulesConnectRO()
 	if err != nil {
+		notifs.BuildProgress(110, err.Error(), DumpRulesPF)
 		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		return
+		return err
 	}
 	defer func(db *sql.DB) {
 		_ = db.Close()
 	}(db)
-
-	if csqlite.CountRows(db, "suricata_rules_packages") > 0 {
-		return
-	}
-
-	_, err = db.Exec(`INSERT OR IGNORE INTO suricata_rules_packages (rulefile,enabled,category) VALUES 
-				('botcc.rules',1,'DMZ'),('ciarmy.rules',0,'DMZ'),('compromised.rules','DMZ',0),
-				('drop.rules',1,'DMZ'),
-				('dshield.rules',1,'DMZ'),
-				('emerging-activex.rules',1,'WEB'),
-				('emerging-attack_response.rules',1,'ALL'),
-				('emerging-chat.rules',0,'WEB'),
-				('emerging-current_events.rules',0,'ALL'),
-				('emerging-dns.rules',0,'DMZ'),
-				('emerging-dos.rules',0,'DMZ'),
-				('emerging-exploit.rules',0,'DMZ'),
-				('emerging-ftp.rules',0,'DMZ'),
-				('emerging-games.rules',0,'ALL'),
-				('emerging-icmp_info.rules',0,'ALL'),
-				('emerging-icmp.rules',0,'ALL'),
-				('emerging-imap.rules',0,'DMZ'),
-				('emerging-inappropriate.rules',0,'WEB'),
-				('emerging-malware.rules',1,'WEB'),
-				('emerging-mobile_malware.rules',0,'WEB'),
-				('emerging-netbios.rules',0,'ALL'),
-				('emerging-p2p.rules',0,'WEB'),
-				('emerging-policy.rules',1,'WEB'),
-				('emerging-pop3.rules',0,'DMZ'),
-				('emerging-rpc.rules',0,'ALL'),
-				('emerging-scada.rules',0,'ALL'),
-				('emerging-scan.rules',1,'ALL'),
-				('emerging-shellcode.rules',1,'ALL'),
-				('emerging-smtp.rules',0,'DMZ'),
-				('emerging-snmp.rules',0,'ALL'),
-				('emerging-sql.rules',0,'ALL'),
-				('emerging-telnet.rules',0,'ALL'),
-				('emerging-tftp.rules',0,'ALL'),
-				('emerging-trojan.rules',1,'ALL'),
-				('emerging-user_agents.rules',0,'ALL'),
-				('emerging-voip.rules',0,'ALL'),
-				('emerging-web_client.rules',1,'HTTP'),
-				('emerging-web_server.rules',0,'HTTP'),
-				('emerging-web_specific_apps.rules',0,'HTTP'),
-				('emerging-worm.rules',1,'ALL'),
-				('tor.rules',0,'ALL'),
-				('decoder-events.rules',0,'ALL'),
-				('stream-events.rules',0,'ALL'),
-				('http-events.rules',0,'HTTP'),
-				('smtp-events.rules',0,'DMZ'),
-				('dns-events.rules',0,'DMZ'),
-				('tls-events.rules',0,'DMZ')`)
-
+	outPath := "/etc/suricata/rules/Production.rules"
+	notifs.BuildProgress(5, "{building}", DumpRulesPF)
+	n, err := dumpEnabledRules(db, outPath)
 	if err != nil {
-		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		notifs.BuildProgress(110, err.Error(), DumpRulesPF)
+		log.Error().Msgf("%v dump rules failed %v", futils.GetCalleRuntime(), err.Error())
+		return err
 	}
+	log.Info().Msgf("%v wrote %d rules", futils.GetCalleRuntime(), n)
+	notifs.BuildProgress(100, "{success}", DumpRulesPF)
+	return nil
 }
-func classifications() string {
-	classificationsDefaults()
-	RulePath := "/etc/suricata/rules"
-	futils.CreateDir(RulePath)
-	db, err := SqliteConns.SuricataConnectRO()
+func dumpEnabledRules(db *sql.DB, outPath string) (written int, err error) {
+
+	var Max int
+	err1 := db.QueryRow(`SELECT count(*) as tcount FROM rules WHERE enabled = 1;`).Scan(&Max)
+	if err1 != nil {
+		return 0, fmt.Errorf("query rules: %w", err1)
+	}
+	if Max == 0 {
+		return 0, nil
+	}
+	log.Info().Msgf("%v %d rules to dump", futils.GetCalleRuntime(), Max)
+
+	const q = `SELECT raw FROM rules WHERE enabled = 1 ORDER BY sid;`
+	rows, err := db.Query(q)
 	if err != nil {
-		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-		return ""
+		return 0, fmt.Errorf("query rules: %w", err)
 	}
-	defer func(db *sql.DB) {
-		_ = db.Close()
-	}(db)
+	defer func(rows *sql.Rows) {
+		_ = rows.Close()
+	}(rows)
 
-	var f []string
-	rulesRows, err := db.Query("SELECT rulefile FROM suricata_rules_packages WHERE enabled=1")
-	if err == nil {
-		defer func(rulesRows *sql.Rows) {
-			_ = rulesRows.Close()
-		}(rulesRows)
+	tmp, err := os.CreateTemp(filepath.Dir(outPath), ".rules-*.tmp")
+	if err != nil {
+		return 0, fmt.Errorf("create temp: %w", err)
+	}
+	tmpPath := tmp.Name()
 
-		for rulesRows.Next() {
-			var rulefile string
-			if err := rulesRows.Scan(&rulefile); err != nil {
-				log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-				continue
-			}
-			if rulefile == "snort.rules" {
-				continue
-			}
-			fpath := fmt.Sprintf("%v/%v", RulePath, rulefile)
-			if !futils.FileExists(fpath) {
-				futils.TouchFile(fpath)
-			}
-			f = append(f, fmt.Sprintf(" - %s", rulefile))
+	defer func() {
+		_ = tmp.Close()
+		if err != nil {
+			_ = os.Remove(tmpPath)
 		}
-	}
-	if futils.FileExists("/etc/suricata/rules/dyre_sslblacklist.rules") {
-		f = append(f, " - dyre_sslblacklist.rules")
-	}
-	if futils.FileExists("/etc/suricata/rules/sslipblacklist.rules") {
-		f = append(f, " - sslipblacklist.rules")
-	}
-	if futils.FileExists("/etc/suricata/rules/sslblacklist.rules") {
-		f = append(f, " - sslblacklist.rules")
-	}
-	if futils.FileExists("/etc/suricata/rules/emerging-drop.suricata.rules") {
-		f = append(f, " - emerging-drop.suricata.rules")
-	}
-	f = append(f, " - iprep.rules")
+	}()
 
-	f = append(f, "")
-	f = append(f, "classification-file: /etc/suricata/classification.config")
-	f = append(f, "reference-config-file: /etc/suricata/reference.config")
-	f = append(f, "")
-	return strings.Join(f, "\n")
+	w := bufio.NewWriterSize(tmp, 256*1024) // 256 KiB buffer
+	C := 0
+	for rows.Next() {
+		var raw string
+		C++
+		prc := int(float64(C) / float64(Max) * 100)
+		if prc > 5 && prc < 95 {
+			notifs.BuildProgress(prc, fmt.Sprintf("%d/%d", C, Max), DumpRulesPF)
+		}
+
+		if err = rows.Scan(&raw); err != nil {
+			return written, fmt.Errorf("scan row: %w", err)
+		}
+		// Ensure each rule ends with exactly one newline
+		if _, err = w.WriteString(raw); err != nil {
+			return written, fmt.Errorf("write rule: %w", err)
+		}
+		if len(raw) == 0 || raw[len(raw)-1] != '\n' {
+			if err = w.WriteByte('\n'); err != nil {
+				return written, fmt.Errorf("write newline: %w", err)
+			}
+		}
+		written++
+	}
+	if err = rows.Err(); err != nil {
+		return written, fmt.Errorf("rows err: %w", err)
+	}
+	if err = w.Flush(); err != nil {
+		return written, fmt.Errorf("flush: %w", err)
+	}
+	if err = tmp.Sync(); err != nil {
+		return written, fmt.Errorf("fsync: %w", err)
+	}
+	if err = tmp.Close(); err != nil {
+		return written, fmt.Errorf("close: %w", err)
+	}
+	if err = os.Chmod(tmpPath, 0o644); err != nil {
+		return written, fmt.Errorf("chmod temp: %w", err)
+	}
+	if err = os.Rename(tmpPath, outPath); err != nil {
+		return written, fmt.Errorf("atomic rename %s -> %s: %w", tmpPath, outPath, err)
+	}
+	return written, nil
 }
 func getHttpPorts() []string {
 	HttpPorts := make(map[int]bool)
@@ -1244,61 +1124,6 @@ func buildClassification() {
 	}
 
 }
-func SuricataDashboard() {
-
-	EnableSuricata := sockets.GET_INFO_INT("EnableSuricata")
-	if EnableSuricata == 0 {
-		return
-	}
-
-	db, err := apostgres.SQLConnectRO()
-	if err != nil {
-		log.Error().Msgf("%v failed to connect to database: %v", futils.GetCalleRuntime(), err.Error())
-		return
-	}
-	defer func(db *sql.DB) {
-		err := db.Close()
-		if err != nil {
-
-		}
-	}(db)
-
-	rows, err := db.Query("SELECT SUM(xcount) as tcount, severity FROM suricata_events GROUP BY severity")
-	if err != nil {
-		log.Error().Msgf("%v failed to query database: %v", futils.GetCalleRuntime(), err.Error())
-		return
-	}
-	defer func(rows *sql.Rows) {
-		err := rows.Close()
-		if err != nil {
-
-		}
-	}(rows)
-
-	severities := make(map[int]int)
-	for rows.Next() {
-		var tcount int
-		var severity int
-		err = rows.Scan(&tcount, &severity)
-		if err != nil {
-			log.Error().Msgf("%v failed to query database: %v", futils.GetCalleRuntime(), err.Error())
-			return
-		}
-
-		if tcount > 0 {
-			severities[severity] = tcount
-		}
-	}
-	err = rows.Err()
-	if err != nil {
-		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
-	}
-	Serialized, _ := gophp.Serialize(severities)
-	filePth := "/usr/share/artica-postfix/ressources/interface-cache/suricata.dashboard"
-	serialized_text := fmt.Sprintf("%s", Serialized)
-	_ = futils.FilePutContents(filePth, serialized_text)
-
-}
 func CheckConfig(TargetFile string) error {
 	suricata := futils.FindProgram("suricata")
 	cmd := fmt.Sprintf("%v -c %v -T", suricata, TargetFile)
@@ -1364,7 +1189,6 @@ func Buildsyslog() {
 
 }
 func Buildlocalsyslogfile(tfile string) string {
-
 	futils.CreateDir(filepath.Dir(tfile))
 	return fmt.Sprintf("\taction(type=\"omfile\" dirCreateMode=\"0700\" FileCreateMode=\"0755\" File=\"%v\" ioBufferSize=\"128k\" flushOnTXEnd=\"off\" asyncWriting=\"on\")", tfile)
 }

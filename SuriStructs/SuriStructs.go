@@ -16,11 +16,15 @@ type OtxOptions struct {
 }
 
 type SuriDaemon struct {
-	Version    string         `json:"Version"`
-	LastUpdate int64          `json:"LastUpdate"`
-	RulesCount int            `json:"RulesCount"`
-	Categories map[string]int `json:"Categories"`
-	Otx        OtxOptions     `json:"Otx"`
+	Version        string         `json:"Version"`
+	LastUpdate     int64          `json:"LastUpdate"`
+	RulesCount     int            `json:"RulesCount"`
+	ActiveRules    int            `json:"ActiveRules"`
+	Categories     map[string]int `json:"Categories"`
+	Families       map[string]int `json:"Families"`
+	Otx            OtxOptions     `json:"Otx"`
+	QueueFailed    string         `json:"QueueFailed"`
+	UseQueueFailed int            `json:"UseQueueFailed"`
 }
 
 func LoadConfig() SuriDaemon {
@@ -31,8 +35,14 @@ func LoadConfig() SuriDaemon {
 	if f.Categories == nil {
 		f.Categories = make(map[string]int)
 	}
+	if f.Families == nil {
+		f.Families = make(map[string]int)
+	}
 	if f.Otx.MaxPages == 0 {
 		f.Otx.MaxPages = 20
+	}
+	if len(f.QueueFailed) < 3 {
+		f.QueueFailed = "/home/suricata/queue-failed"
 	}
 
 	return f

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"LogForward"
+	"PFRing"
+	"Reconfigure"
 	"Update"
 	"Update/Otx"
 	"fmt"
@@ -24,7 +27,14 @@ func ParseCmdLines() {
 		Otx.Run()
 		os.Exit(0)
 	}
-
+	if *CMDCleanQueue {
+		LogForward.CleanQueueFailed()
+		os.Exit(0)
+	}
+	if *CMDClassify {
+		surirules.Classifications()
+		os.Exit(0)
+	}
 	if *cmdstopsuricata {
 		suricata.Stop()
 		os.Exit(0)
@@ -59,11 +69,11 @@ func ParseCmdLines() {
 		os.Exit(0)
 	}
 	if *cmdreconfiguresuricata {
-		suricata.Reconfigure()
+		Reconfigure.Run()
 		os.Exit(0)
 	}
 	if *cmdPFRing {
-		suricata.CheckPFRing()
+		PFRing.Check()
 		os.Exit(0)
 	}
 

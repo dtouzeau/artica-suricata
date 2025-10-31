@@ -2,6 +2,7 @@ package RESTApi
 
 import (
 	"LogForward"
+	"Reconfigure"
 	"SuriStructs"
 	"Update"
 	"context"
@@ -54,7 +55,14 @@ func restSuricataReconfigure(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
 		return
 	}
-	go suricata.Reconfigure()
+	go Reconfigure.Run()
+	OutTrue(ctx)
+}
+func BuildRules(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	go Reconfigure.BuildRules()
 	OutTrue(ctx)
 }
 func restSuricataReload(ctx *fasthttp.RequestCtx) {
@@ -78,14 +86,16 @@ func GlobalStatus(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	var data struct {
-		Status bool                   `json:"Status"`
-		Error  string                 `json:"Error"`
-		Alerts int64                  `json:"Alerts"`
-		Info   SuriStructs.SuriDaemon `json:"Info"`
+		Status        bool                   `json:"Status"`
+		Error         string                 `json:"Error"`
+		Alerts        int64                  `json:"Alerts"`
+		UpdateTimeOut int64                  `json:"UpdateTimeOut"`
+		Info          SuriStructs.SuriDaemon `json:"Info"`
 	}
 	data.Alerts = LogForward.AlertsCount
 	data.Status = true
 	data.Info = SuriStructs.LoadConfig()
+	data.UpdateTimeOut = Update.TimeToUpdate()
 	jsonBytes, _ := json.MarshalIndent(data, "", "  ")
 	ctx.Response.Header.Set("Content-Type", "application/json;charset=UTF-8")
 	ctx.SetStatusCode(200)
@@ -231,6 +241,19 @@ func OtxSave(ctx *fasthttp.RequestCtx) {
 	SuriStructs.SaveConfig(Gconf)
 	OutTrue(ctx)
 }
+func SetQueueParams(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	queuepath := futils.UrlDecode(fmt.Sprintf("%v", ctx.UserValue("queuepath")))
+	enabled := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("enabled")))
+	Gconf := SuriStructs.LoadConfig()
+	Gconf.UseQueueFailed = enabled
+	Gconf.QueueFailed = queuepath
+	SuriStructs.SaveConfig(Gconf)
+	OutTrue(ctx)
+}
+
 func IfaceState(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
 		return
