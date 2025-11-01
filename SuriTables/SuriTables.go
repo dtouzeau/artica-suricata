@@ -6,11 +6,12 @@ import (
 	"database/sql"
 	"fmt"
 	"futils"
-	_ "github.com/lib/pq"
-	"github.com/rs/zerolog/log"
 	"notifs"
 	"sockets"
 	"strings"
+
+	_ "github.com/lib/pq"
+	"github.com/rs/zerolog/log"
 )
 
 func Check() {
@@ -53,6 +54,13 @@ func Check() {
 		}
 		sockets.DeleteTemp("PostgresTables")
 	}
+	if !tables["suricata_tmp"] {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricata_tmp (signature BIGINT PRIMARY KEY,description varchar(128),classtype varchar(35),source_file VARCHAR(40) )`)
+		if err != nil {
+			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		}
+	}
+
 	if !tables["suricata_sig"] {
 		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricata_sig (signature BIGINT PRIMARY KEY,description varchar(128),enabled smallint NOT NULL DEFAULT 1,firewall smallint NOT NULL DEFAULT 0,notify smallint NOT NULL DEFAULT 0 )`)
 		if err != nil {
@@ -129,6 +137,7 @@ func Check() {
 	apostgres.CreateFieldInt(db, "suricata_sig", "firewall")
 	apostgres.CreateFieldInt(db, "suricata_sig", "notify")
 	apostgres.CreateIndex(db, "suricata_sig", "enabled", []string{"firewall", "notify", "enabled"})
+	apostgres.CreateIndex(db, "suricata_events", "idx_suricata_events_signature", []string{"signature"})
 	apostgres.CreateIndex(db, "suricata_events", "PROXYNAMEi", []string{"proxyname"})
 	apostgres.CreateIndex(db, "suricata_events", "keyi", []string{"zDate", "src_ip", "dst_ip", "severity", "signature", "xcount"})
 	go Classifications.Parse()

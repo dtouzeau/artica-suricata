@@ -4,6 +4,7 @@ import (
 	"LogForward"
 	"Reconfigure"
 	"SuriStructs"
+	"SuricataACLS"
 	"Update"
 	"context"
 	"encoding/json"
@@ -252,6 +253,24 @@ func SetQueueParams(ctx *fasthttp.RequestCtx) {
 	Gconf.QueueFailed = queuepath
 	SuriStructs.SaveConfig(Gconf)
 	OutTrue(ctx)
+}
+func AclsExplains(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	go SuricataACLS.SetACLsExplain()
+	OutTrue(ctx)
+}
+func RulesStats(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+
+	Data := surisock.RuleStats()
+	jsonBytes, _ := json.MarshalIndent(Data, "", "  ")
+	ctx.Response.Header.Set("Content-Type", "application/json;charset=UTF-8")
+	ctx.SetStatusCode(200)
+	_, _ = fmt.Fprintf(ctx, string(jsonBytes))
 }
 
 func IfaceState(ctx *fasthttp.RequestCtx) {

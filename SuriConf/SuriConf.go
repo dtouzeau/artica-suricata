@@ -6,6 +6,8 @@ import (
 	"SqliteConns"
 	"apostgres"
 	"bufio"
+	"bytes"
+	"context"
 	"crypto/md5"
 	"csqlite"
 	"database/sql"
@@ -15,21 +17,42 @@ import (
 	"logsink"
 	"notifs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sockets"
 	"strings"
 	"suricata/SuricataTools"
+	"syscall"
+	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/rs/zerolog/log"
 )
 
+const LockFile = "/etc/suricata/suricata.lock"
 const DumpRulesPF = "dumprules.progress"
 
 var ClassificationsRegex = regexp.MustCompile(`^config classification:\s+(.+?),(.+?),([0-9]+)`)
 
-func Build() error {
+func fixClassificationsFile() {
+
+	if futils.FileExists("/etc/suricata/rules/classification.config") {
+		futils.CopyFile("/etc/suricata/rules/classification.config", "/etc/suricata/classification.config")
+		return
+	}
+	if futils.FileExists("/etc/suricata/classification.config") {
+		futils.CopyFile("/etc/suricata/classification.config", "/etc/suricata/rules/classification.config")
+	}
+}
+
+func Build(BuildRules bool) error {
+
+	if futils.FileExists(LockFile) {
+		return fmt.Errorf("suricata configuration is locked by another process")
+	}
+	futils.TouchFile(LockFile)
+	defer futils.DeleteFile(LockFile)
 
 	if futils.IsDirDirectory("/etc/suricata/suricata") {
 		cp := futils.FindProgram("cp")
@@ -37,8 +60,20 @@ func Build() error {
 		_ = futils.RmRF("/etc/suricata/suricata")
 	}
 
+	TempFiles := []string{"/etc/suricata/suricata.builded.yaml",
+		"/etc/suricata/threshold.temp.config",
+	}
+
 	futils.CreateDir("/etc/suricata/iprep")
 	futils.CreateDir("/etc/suricata/rules")
+	fixClassificationsFile()
+
+	if BuildRules {
+		err := DumpRules()
+		if err != nil {
+			return err
+		}
+	}
 
 	// Constructing the configuration file contents
 	var f []string
@@ -376,14 +411,13 @@ func Build() error {
 	f = append(f, PFRingIfaces.Build())
 	f = append(f, `default-rule-path: /etc/suricata/rules`)
 	f = append(f, "rule-files:")
-	f = append(f, writePersoRule())
-	f = append(f, writeWhitelistRule())
+	//f = append(f, writePersoRule())
 	RulePath := "/etc/suricata/rules"
 	futils.CreateDir(RulePath)
 	f = append(f, " - Production.rules")
 	f = append(f, " - iprep.rules")
 	f = append(f, "")
-	f = append(f, "classification-file: /etc/suricata/classification.config")
+	f = append(f, "classification-file: /etc/suricata/rules/classification.config")
 	f = append(f, "reference-config-file: /etc/suricata/reference.config")
 	f = append(f, "")
 	if !futils.FileExists("/etc/suricata/rules/Production.rules") {
@@ -588,15 +622,16 @@ func Build() error {
 	f = append(f, ``)
 
 	tmpfile := "/etc/suricata/suricata.builded.yaml"
+	log.Debug().Msgf("%v Saving %v", futils.GetCalleRuntime(), tmpfile)
 	_ = futils.FilePutContents(tmpfile, strings.Join(f, "\n"))
-	SuricataTools.FixDuplicateRules()
+	//SuricataTools.FixDuplicateRules()
+	log.Debug().Msgf("%v threshold", futils.GetCalleRuntime())
 	_ = threshold()
+	log.Debug().Msgf("%v buildClassification", futils.GetCalleRuntime())
 	buildClassification()
+	log.Debug().Msgf("%v Buildsyslog", futils.GetCalleRuntime())
 	Buildsyslog()
 
-	TempFiles := []string{"/etc/suricata/suricata.builded.yaml",
-		"/etc/suricata/threshold.temp.config",
-	}
 	SourcesFiles := []string{"/etc/suricata/suricata.yaml",
 		"/etc/suricata/threshold.config"}
 	var md51 string
@@ -611,6 +646,7 @@ func Build() error {
 	if md51 == md52 {
 		return nil
 	}
+	log.Debug().Msgf("%v CheckConfig", futils.GetCalleRuntime())
 	err := CheckConfig(tmpfile)
 	if err != nil {
 		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
@@ -804,14 +840,7 @@ func hyperScan() (bool, string) {
 	return hyperScanSupported, mpmAlgo
 
 }
-func writeWhitelistRule() string {
-	var f []string
-	trustedPattern := "/etc/suricata/rules/whitelist.rules"
-	f = append(f, " - whitelist.rules")
-	trustedRule := `alert ip $TRUSTED_NET any -> any any (msg:"Allow traffic from Trusted network";sid:1000000; rev:1;)`
-	_ = futils.FilePutContents(trustedPattern, trustedRule+"\n")
-	return strings.Join(f, "\n")
-}
+
 func writePersoRule() string {
 	var f []string
 	filePath := "/etc/suricata/rules/local.rules"
@@ -1124,33 +1153,78 @@ func buildClassification() {
 	}
 
 }
-func CheckConfig(TargetFile string) error {
+func runSuricataSelfTest(TargetFile string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	suricata := futils.FindProgram("suricata")
-	cmd := fmt.Sprintf("%v -c %v -T", suricata, TargetFile)
-	err, out := futils.ExecuteShell(cmd)
-	if err != nil {
-		tb := strings.Split(out, "\n")
-		for _, line := range tb {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
+	cmd := exec.CommandContext(ctx,
+		suricata,
+		"-v",
+		"-c", TargetFile,
+		"-T",
+	)
 
-			if strings.Contains(line, `Hyperscan (hs) support for mpm-algo is not compiled`) {
-				sockets.SET_INFO_INT("HyperScanNotCompiled", 1)
-				return fmt.Errorf("%v disabling HyperScan (not compiled), please reconfigure", futils.GetCalleRuntime())
-			}
+	// Put the process in its own group so we can kill the group if we time out.
+	// (exec.CommandContext only kills the direct child, not children-of-child.)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
-			if strings.HasPrefix(line, "Error:") {
-				return fmt.Errorf(line)
-			}
-			if strings.Contains(line, "Configuration provided was successfully") {
-				return nil
-			}
-		}
-		return fmt.Errorf(out)
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+
+	// Start the command
+	if err := cmd.Start(); err != nil {
+		return "", fmt.Errorf("start suricata: %w", err)
 	}
-	return nil
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case err := <-done:
+		// Completed (success or failure). Return whatever output we captured.
+		if err != nil {
+			// Include Suricata’s output in the error for easier debugging.
+			return buf.String(), fmt.Errorf("suricata test failed: %w", err)
+		}
+		return buf.String(), nil
+
+	case <-ctx.Done():
+		// Timed out; kill the entire process group.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // best-effort
+		<-done                                              // wait for Wait() to return
+		return buf.String(), fmt.Errorf("timeout after 5 minutes: %w", ctx.Err())
+	}
+}
+func CheckConfig(TargetFile string) error {
+
+	out, err := runSuricataSelfTest(TargetFile)
+	if err != nil {
+		log.Error().Msgf("%v %v but continue analyzing...", futils.GetCalleRuntime(), err.Error())
+	}
+
+	tb := strings.Split(out, "\n")
+	for _, line := range tb {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		log.Info().Msgf("%v [%v]", futils.GetCalleRuntime(), line)
+
+		if strings.Contains(line, `Hyperscan (hs) support for mpm-algo is not compiled`) {
+			sockets.SET_INFO_INT("HyperScanNotCompiled", 1)
+			return fmt.Errorf("%v disabling HyperScan (not compiled), please reconfigure", futils.GetCalleRuntime())
+		}
+
+		if strings.HasPrefix(line, "Error:") {
+			return fmt.Errorf(line)
+		}
+		if strings.Contains(line, "Configuration provided was successfully") {
+			return nil
+		}
+	}
+	return fmt.Errorf(out)
+
 }
 func Buildsyslog() {
 

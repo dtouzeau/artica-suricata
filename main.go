@@ -43,6 +43,9 @@ var CMDParseRules = flag.Bool("suricata-rules", false, "Parse rules from directo
 var CMDOtx = flag.Bool("otx", false, "Get rules from OTX")
 var CMDCleanQueue = flag.Bool("clean-queue", false, "Destroy PostgreSQL queue failed")
 var CMDClassify = flag.Bool("classify", false, "Build json classification file")
+var CMDRules = flag.Bool("rules", false, "Get rules infos")
+var CMDPostgreSQL = flag.Bool("postgres", false, "PostgreSQL maintenance")
+var CMDAclsExplains = flag.Bool("acls-explains", false, "Fill explain text for acls")
 
 func main() {
 

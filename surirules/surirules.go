@@ -24,6 +24,7 @@ var sidRegex1 = regexp.MustCompile(`;sid:([0-9]+);`)
 var classtypeRegex = regexp.MustCompile(` classtype:(.*?);`)
 var classtypeRegex2 = regexp.MustCompile(`;classtype:(.*?);`)
 var classtypeRegex3 = regexp.MustCompile(` iprep:.*?,(.*?),`)
+var SeverityRegex1 = regexp.MustCompile(`signature_severity\s+(.+?),`)
 
 type Rule struct {
 	Enabled   bool
@@ -92,7 +93,7 @@ func ImportSuricataRulesToSQLite() error {
 		if !strings.HasSuffix(sFile, ".rules") {
 			continue
 		}
-		if sFile == "local.rules" || sFile == "iprep.rules" || sFile == "emerging-retired.rules" || sFile == "Production.rules" {
+		if sFile == "local.rules" || sFile == "whitelist.rules" || sFile == "iprep.rules" || sFile == "emerging-retired.rules" || sFile == "Production.rules" || sFile == "emerging-deleted.rules" {
 			continue
 		}
 		ruleFiles = append(ruleFiles, RootPath+"/"+sFile)
@@ -186,7 +187,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("%v commit: %w", futils.GetCalleRuntime(), err)
 	}
-
+	RulesToPostgres()
 	for sid, enabled := range MemConf {
 		_, err := db.Exec(`UPDATE rules SET enabled=? WHERE sid=?`, enabled, sid)
 		if err != nil {
@@ -519,6 +520,10 @@ func parseRule(raw string) (Rule, error) {
 			log.Debug().Msgf("%v Missing sid in rule: %q", futils.GetCalleRuntime(), raw)
 		}
 	}
+	if r.Priority == nil {
+		r.Priority = findSeverity(raw)
+	}
+
 	if r.ClassType == nil {
 		classtype := findSClassTypeInrule(raw)
 		r.ClassType = &classtype
@@ -543,6 +548,38 @@ func findSIdInrule(raw string) int {
 
 	return 0
 }
+func findSeverity(raw string) *int {
+	sid := futils.RegexGroup1(SeverityRegex1, raw)
+	if len(sid) > 0 {
+		sid = strings.TrimSpace(sid)
+		sid = strings.ToLower(sid)
+		if sid == "major" {
+			sidInt := 1
+			return &sidInt
+		}
+		if sid == "critical" {
+			sidInt := 1
+			return &sidInt
+		}
+		if sid == "minor" {
+			sidInt := 3
+			return &sidInt
+		}
+
+		if sid == "informational" {
+			sidInt := 4
+			return &sidInt
+		}
+		if sid == "unknown" {
+			sidInt := 4
+			return &sidInt
+		}
+		log.Debug().Msgf("%v Unknown severity: [%v] in [%v]", futils.GetCalleRuntime(), sid, raw)
+		return nil
+	}
+	return nil
+}
+
 func findSClassTypeInrule(raw string) string {
 	sid := futils.RegexGroup1(classtypeRegex, raw)
 	if len(sid) > 0 {

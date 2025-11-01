@@ -84,7 +84,7 @@ func Install() {
 	notifs.BuildProgress(60, "{install_service}", ProgressF)
 	notifs.BuildProgress(80, "{install_service}", ProgressF)
 	CreateMonitService()
-	_ = SuriConf.Build()
+	_ = SuriConf.Build(false)
 	go func() {
 		Update.Run()
 	}()

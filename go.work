@@ -23,7 +23,6 @@ use (
 	monit
 	logsink
 	afirewall
-	sysctl
 	DNSMem
 	MyNets
 	logrotate

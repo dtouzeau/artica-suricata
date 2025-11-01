@@ -108,6 +108,8 @@ func buildRouter() *router.Router {
 	r.GET("/debug/pprof/{profile:*}", logRequest(pprofhandler.PprofHandler))
 	r.GET("/otx/save/{ApiKey}/{MaxPages}/{OtxEnabled}", logRequest(OtxSave))
 	r.GET("/config/queue/{queuepath}/{enabled}", logRequest(SetQueueParams))
+	r.GET("/rules/stats", logRequest(RulesStats))
+	r.GET("/acls/explains", logRequest(AclsExplains))
 
 	return r
 }

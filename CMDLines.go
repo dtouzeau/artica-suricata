@@ -4,16 +4,30 @@ import (
 	"LogForward"
 	"PFRing"
 	"Reconfigure"
+	"SuriTables"
+	"SuricataACLS"
 	"Update"
 	"Update/Otx"
+	"encoding/json"
 	"fmt"
 	"os"
 	"suricata"
 	"suricata/SuricataTools"
 	"surirules"
+	"surisock"
 )
 
 func ParseCmdLines() {
+	if *CMDAclsExplains {
+		SuricataACLS.SetACLsExplain()
+		os.Exit(0)
+	}
+
+	if *CMDPostgreSQL {
+		SuriTables.Check()
+		surirules.RulesToPostgres()
+		os.Exit(0)
+	}
 
 	if *CMDParseRules {
 		err := surirules.ImportSuricataRulesToSQLite()
@@ -33,6 +47,12 @@ func ParseCmdLines() {
 	}
 	if *CMDClassify {
 		surirules.Classifications()
+		os.Exit(0)
+	}
+	if *CMDRules {
+		data := surisock.RuleStats()
+		jsonBytes, _ := json.MarshalIndent(data, "", "  ")
+		fmt.Println(string(jsonBytes))
 		os.Exit(0)
 	}
 	if *cmdstopsuricata {
@@ -83,7 +103,7 @@ func ParseCmdLines() {
 		os.Exit(0)
 	}
 	if *cmdFixDuplicatesssuricata {
-		SuricataTools.FixDuplicateRules()
+		//SuricataTools.FixDuplicateRules()
 		os.Exit(0)
 	}
 	if len(*CMDSuricataSock) > 1 {

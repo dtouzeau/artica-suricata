@@ -18,6 +18,14 @@ type Reply struct {
 	Return  string  `json:"return"`  // "OK" or "NOK"
 	Message Message `json:"message"` // payload
 }
+type SuricataRulesetStats struct {
+	ID           int    `json:"id"`
+	RulesLoaded  int    `json:"rules_loaded"`
+	RulesFailed  int    `json:"rules_failed"`
+	RulesSkipped int    `json:"rules_skipped"`
+	Error        string `json:"Error,omitempty"`
+	Status       bool   `json:"Status,omitempty"`
+}
 
 // ==== Message root ====
 
@@ -543,6 +551,28 @@ func GetStats() Message {
 		return f
 	}
 	return Message{}
+}
+func RuleStats() SuricataRulesetStats {
+	zctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	rep, err := RulesetStats(zctx)
+	if err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err)
+		return SuricataRulesetStats{Error: err.Error(), Status: false}
+	}
+
+	if rep != nil {
+		var f []SuricataRulesetStats
+		if err := json.Unmarshal(rep.Message, &f); err != nil {
+			log.Error().Msgf("%v %v [%v]", futils.GetCalleRuntime(), err, string(rep.Message))
+			return SuricataRulesetStats{Error: err.Error(), Status: false}
+		}
+		f[0].Status = true
+		return f[0]
+	}
+
+	return SuricataRulesetStats{Error: "no reply", Status: false}
+
 }
 
 /* --------------------------------------------------------------------------

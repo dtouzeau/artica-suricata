@@ -4997,6 +4997,11 @@ func ReplaceAccents(s string) string {
 	s = html.UnescapeString(s)
 	return s
 }
+func Latin1ToUTF8(b []byte) string {
+	r := transform.NewReader(bytes.NewReader(b), charmap.ISO8859_1.NewDecoder())
+	out, _ := io.ReadAll(r)
+	return string(out)
+}
 
 func Utf8Encode(s string) string {
 	iso8859_1 := []byte{
@@ -6759,6 +6764,37 @@ func ExtractMainDomain(fqdn string) string {
 		return domain
 	}
 	return fqdn // Return the original FQDN if it doesn't conform to expected structure
+}
+func FileCountLines(path string) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer func(f *os.File) {
+		_ = f.Close()
+	}(f)
+
+	const bufSize = 32 * 1024 // 32 KB buffer (tweak as needed)
+	buf := make([]byte, bufSize)
+	var count int64
+
+	for {
+		n, err := f.Read(buf)
+		if n > 0 {
+			for _, b := range buf[:n] {
+				if b == '\n' {
+					count++
+				}
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return count, err
+		}
+	}
+	return count, nil
 }
 
 func IsAnFQDN(fqdn string) bool {
