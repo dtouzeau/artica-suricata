@@ -558,7 +558,7 @@ func findSeverity(raw string) *int {
 			return &sidInt
 		}
 		if sid == "critical" {
-			sidInt := 1
+			sidInt := 2
 			return &sidInt
 		}
 		if sid == "minor" {

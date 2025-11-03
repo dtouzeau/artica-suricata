@@ -4,6 +4,7 @@ import (
 	"BPFfilter"
 	"PFRingIfaces"
 	"SqliteConns"
+	"SuriStructs"
 	"apostgres"
 	"bufio"
 	"bytes"
@@ -431,7 +432,7 @@ func Build(BuildRules bool) error {
 	f = append(f, `reputation-files:`)
 
 	reputationFiles := []string{"alienvault.list", "emergingthreatspro.list", "usom.list",
-		"firehol_level1.list", "blocklist_de_strongips.list", "cibadguys.list", "otx.list",
+		"firehol_level1.list", "blocklist_de_strongips.list", "cibadguys.list", "otx.list", "dsipv4.list",
 	}
 
 	for _, fname := range reputationFiles {
@@ -753,7 +754,9 @@ func threshold() error {
 	return err
 }
 func IPRepRules() {
-	// Define the rules
+
+	gbconf := SuriStructs.LoadConfig()
+
 	rules := []string{
 		"alert tcp any any -> any any (msg:\"Bad reputation: Alien Vault reputation IPs\"; iprep:any,alienvault,=,127; sid:10001; rev:1;)",
 		"alert tcp any any -> any any (msg:\"Bad reputation: Emerging Threats Pro reputation file\"; iprep:any,emergingthreatspro,=,127; sid:10002; rev:1;)",
@@ -762,6 +765,9 @@ func IPRepRules() {
 		"alert tcp any any -> any any (msg:\"Bad reputation: Firehol strong\"; iprep:any,firehol_strong,=,127; sid:10005; rev:1;)",
 		"alert tcp any any -> any any (msg:\"Bad reputation: CINS Army List\"; iprep:any,cins,=,127; sid:10006; rev:1;)",
 		"alert ip $HOME_NET any -> any any (msg:\"OTX internal host talking to host known in pulse\"; flow:to_server; iprep:dst,Pulse,>,30; sid:41414141; rev:1;)",
+	}
+	if gbconf.DataShieldIPv4Blocklist == 1 {
+		rules = append(rules, "alert tcp any any -> any any (msg:\"Bad reputation: Data-Shield IPv4 Blocklist\"; iprep:any,dsipv4,=,127; sid:10007; rev:1;)")
 	}
 
 	// Join the rules into a single string with newlines
@@ -778,6 +784,7 @@ func IPRepCategories() {
 		"4,firehol1,Firehol level 1 reputation list",
 		"5,firehol_strong,Firehol more than 5.000 attacks during 2 months",
 		"6,cins,CINS Army List",
+		"7,dsipv4,Data-Shield IPv4 Blocklist",
 		"41,Pulse,OTX community identified IP address",
 	}
 	categoriesContent := strings.Join(categories, "\n")

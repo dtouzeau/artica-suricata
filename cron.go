@@ -2,6 +2,7 @@ package main
 
 import (
 	"DashBoard"
+	"DataShieldIPv4Blocklist"
 	"LogForward"
 	"Update"
 	"logrotate"
@@ -24,6 +25,10 @@ func Each15Minutes() {
 func Each10Minutes() {
 
 }
+func Each30Minutes() {
+	DataShieldIPv4Blocklist.Run(true)
+}
+
 func Each12Hours() {
 	suricata.EveJsonPurge()
 }

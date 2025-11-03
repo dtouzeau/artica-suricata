@@ -41,5 +41,10 @@ use (
 	DashBoard
 	Reconfigure
 	PFRing
+	SuricataACLS/PortsGrouping
+	SuricataACLS/CheckArule
+	SuricataACLS/DomainsGrouping
+	Update/DataShieldIPv4Blocklist
+	Update/IPSets
 
 )

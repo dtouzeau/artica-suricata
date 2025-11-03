@@ -15,6 +15,7 @@ import (
 	"notifs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sockets"
@@ -552,6 +553,28 @@ func isIPv6(address string) bool {
 	// If To4() returns nil, it means the address is not IPv4, so it's IPv6
 	return ip.To4() == nil
 }
+func SubDir(p string) string {
+	// Normalize and clean the path
+	p = path.Clean(p)
+
+	// Split the path into parts
+	parts := strings.Split(p, "/")
+
+	// If path has fewer than 3 parts, it means no subdirectory after /run/
+	// Example: ["", "run", "toto.pid"] -> no subdir
+	if len(parts) <= 3 {
+		return ""
+	}
+
+	// Extract everything between "run" and the last element (the file name)
+	for i, part := range parts {
+		if part == "run" && i+2 < len(parts) {
+			return strings.Join(parts[i+1:len(parts)-1], "/")
+		}
+	}
+
+	return ""
+}
 func EnableSystemdService(opts ServiceOptions) {
 	if !DirectoryExists("/etc/systemd/system") {
 		return
@@ -666,6 +689,12 @@ func EnableSystemdService(opts ServiceOptions) {
 	if len(opts.Pidfile) > 3 {
 		ZpidFile := opts.Pidfile
 		ZpidFile = strings.TrimPrefix(ZpidFile, "/var")
+		SubDirName := SubDir(ZpidFile)
+		if len(SubDirName) > 1 {
+			z = append(z, fmt.Sprintf("\tRuntimeDirectory=%v", SubDirName))
+			z = append(z, fmt.Sprintf("\tRuntimeDirectoryMode = 0755"))
+		}
+
 		z = append(z, fmt.Sprintf("\tPIDFile=%v", opts.Pidfile))
 	}
 	if len(opts.ExecStartPrePHP) > 3 {

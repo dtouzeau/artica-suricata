@@ -16,15 +16,18 @@ type OtxOptions struct {
 }
 
 type SuriDaemon struct {
-	Version        string         `json:"Version"`
-	LastUpdate     int64          `json:"LastUpdate"`
-	RulesCount     int            `json:"RulesCount"`
-	ActiveRules    int            `json:"ActiveRules"`
-	Categories     map[string]int `json:"Categories"`
-	Families       map[string]int `json:"Families"`
-	Otx            OtxOptions     `json:"Otx"`
-	QueueFailed    string         `json:"QueueFailed"`
-	UseQueueFailed int            `json:"UseQueueFailed"`
+	Version                    string         `json:"Version"`
+	LastUpdate                 int64          `json:"LastUpdate"`
+	RulesCount                 int            `json:"RulesCount"`
+	ActiveRules                int            `json:"ActiveRules"`
+	Categories                 map[string]int `json:"Categories"`
+	Families                   map[string]int `json:"Families"`
+	Otx                        OtxOptions     `json:"Otx"`
+	QueueFailed                string         `json:"QueueFailed"`
+	UseQueueFailed             int            `json:"UseQueueFailed"`
+	DataShieldIPv4Blocklist    int            `json:"DataShieldIPv4Blocklist"`
+	DataShieldIPv4BlocklistSHA string         `json:"DataShieldIPv4BlocklistMd5"`
+	DataShieldIPv4BlocklistRec int            `json:"DataShieldIPv4BlocklistRec"`
 }
 
 func LoadConfig() SuriDaemon {

@@ -258,7 +258,10 @@ func AclsExplains(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
 		return
 	}
-	go SuricataACLS.SetACLsExplain()
+	go func() {
+		SuricataACLS.SetACLsExplain()
+		SuricataACLS.BuildACLs()
+	}()
 	OutTrue(ctx)
 }
 func RulesStats(ctx *fasthttp.RequestCtx) {

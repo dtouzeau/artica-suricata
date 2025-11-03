@@ -111,6 +111,7 @@ func main() {
 	_, _ = MainCron.AddFunc("*/5 * * * *", Each5Minutes)
 	_, _ = MainCron.AddFunc("*/15 * * * *", Each15Minutes)
 	_, _ = MainCron.AddFunc("*/10 * * * *", Each10Minutes)
+	_, _ = MainCron.AddFunc("*/30 * * * *", Each30Minutes)
 	_, err = MainCron.AddFunc("0 */12 * * *", Each12Hours)
 	SquidRotateOnlySchedule := sockets.GET_INFO_INT("SquidRotateOnlySchedule")
 	if SquidRotateOnlySchedule == 1 {

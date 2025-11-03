@@ -1,7 +1,9 @@
 package Update
 
 import (
+	"DataShieldIPv4Blocklist"
 	"SuriStructs"
+	"Update/IPSets"
 	"Update/Otx"
 	"apostgres"
 	"bufio"
@@ -147,7 +149,7 @@ func Update() error {
 			final = true
 		}
 		notifs.BuildProgress(55, "{downloading} IP Reputation 4/9", ProgressF)
-		if ipreputationUsom() {
+		if DataShieldIPv4Blocklist.Run(false) {
 			final = true
 		}
 		notifs.BuildProgress(60, "{downloading} IP Reputation 5/9", ProgressF)
@@ -405,66 +407,6 @@ func ipreputationBlocklistDeStrongips() bool {
 	sockets.SET_INFO_STR("blocklist_de_strongips.reputation", currentMD5)
 	return true
 }
-func ipreputationUsom() bool {
-	uri := "https://blacklist.tnetworks.com.tr/usom-ip-list.txt"
-	tempDir := os.TempDir()
-	targetPath := filepath.Join(tempDir, "usom_ip_list.txt")
-
-	notifs.BuildProgress(56, "{downloading} IP Reputation 4/9", ProgressF)
-	if !httpclient.DownloadFile(uri, targetPath) {
-		log.Error().Msgf("%v Unable to download reputation file", futils.GetCalleRuntime())
-		return false
-	}
-
-	oldMD5 := sockets.GET_INFO_STR("usom.reputation")
-	currentMD5 := futils.MD5File(targetPath)
-
-	if oldMD5 == currentMD5 {
-		_ = os.Remove(targetPath)
-		return true
-	}
-
-	file, err := os.Open(targetPath)
-	if err != nil {
-		log.Error().Msgf("%v Unable to open reputation file:%v ", futils.GetCalleRuntime(), err)
-		return false
-	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-
-		}
-	}(file)
-	notifs.BuildProgress(57, "{downloading} IP Reputation 4/9", ProgressF)
-	outputPath := filepath.Join(iprepDir, "usom.list")
-	outputFile, err := os.Create(outputPath)
-	if err != nil {
-		fmt.Println("Unable to create output file:", err)
-		return false
-	}
-	defer func(outputFile *os.File) {
-		err := outputFile.Close()
-		if err != nil {
-
-		}
-	}(outputFile)
-
-	scanner := bufio.NewScanner(file)
-	notifs.BuildProgress(58, "{downloading} IP Reputation 4/9", ProgressF)
-	re := regexp.MustCompile(`^([0-9\.]+)`) // Regex to match IP addresses
-	for scanner.Scan() {
-		line := scanner.Text()
-		if re.MatchString(line) {
-			parts := re.FindStringSubmatch(line)
-			_, _ = outputFile.WriteString(fmt.Sprintf("%s,3,127\n", parts[1]))
-		}
-	}
-
-	_ = os.Remove(targetPath)
-	notifs.BuildProgress(59, "{downloading} IP Reputation 4/9", ProgressF)
-	sockets.SET_INFO_STR("usom.reputation", currentMD5)
-	return true
-}
 func ipreputationAlienvault() bool {
 	alienvaultURL := "https://reputation.alienvault.com/reputation.snort"
 	tempDir := futils.TEMPDIR()
@@ -587,7 +529,6 @@ func ipreputationEmergingThreatsPro() bool {
 	}
 	_ = os.Remove(targetPath)
 	sockets.SET_INFO_STR("emergingthreatspro.list", currentMD5)
-
 	return true
 }
 func ipreputationFirehol1() bool {
@@ -597,7 +538,6 @@ func ipreputationFirehol1() bool {
 
 	// Download the file
 	if !httpclient.DownloadFile(uri, targetPath) {
-
 		log.Error().Msgf("%v Unable to download reputation file", futils.GetCalleRuntime())
 		return false
 	}
@@ -609,46 +549,12 @@ func ipreputationFirehol1() bool {
 		return true
 	}
 
-	// Open the downloaded file
-	file, err := os.Open(targetPath)
+	err, Counter := IPSets.Build(IPSets.IPBuild{CategoryID: 4, SourcePath: targetPath, OutFileName: "firehol_level1.list"})
 	if err != nil {
-		log.Error().Msgf("%v Unable to open reputation file: %v", futils.GetCalleRuntime(), err.Error())
+		log.Error().Msgf("%v Unable to build IPSet:%v", futils.GetCalleRuntime(), err)
 		return false
 	}
-	defer func(file *os.File) {
-		err := file.Close()
-		if err != nil {
-
-		}
-	}(file)
-
-	// Create the directory if it doesn't exist
-
-	futils.CreateDir(iprepDir)
-	outputPath := filepath.Join(iprepDir, "firehol_level1.list")
-	outputFile, err := os.Create(outputPath)
-	if err != nil {
-		fmt.Println("Unable to create output file:", err)
-		return false
-	}
-	defer func(outputFile *os.File) {
-		err := outputFile.Close()
-		if err != nil {
-
-		}
-	}(outputFile)
-
-	scanner := bufio.NewScanner(file)
-	re := regexp.MustCompile(`^([0-9\.\/]+)`) // Regex to match IP addresses
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if re.MatchString(line) {
-			parts := re.FindStringSubmatch(line)
-			_, _ = outputFile.WriteString(fmt.Sprintf("%s,4,127\n", parts[1]))
-		}
-	}
-
-	_ = os.Remove(targetPath)
+	log.Info().Msgf("%v IPSet built: %d records", futils.GetCalleRuntime(), Counter)
 	sockets.SET_INFO_STR("firehol_level1.reputation", currentMD5)
 
 	return true

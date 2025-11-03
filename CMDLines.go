@@ -20,6 +20,7 @@ import (
 func ParseCmdLines() {
 	if *CMDAclsExplains {
 		SuricataACLS.SetACLsExplain()
+		SuricataACLS.BuildACLs()
 		os.Exit(0)
 	}
 
