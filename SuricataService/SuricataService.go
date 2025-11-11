@@ -1,21 +1,18 @@
 package SuricataService
 
 import (
-	"PFRingIfaces"
-	"bytes"
-	"context"
-	"errors"
+	"PFRing"
 	"fmt"
 	"futils"
+	"httpclient"
 	"ipclass"
 	"notifs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sockets"
-	"strconv"
 	"strings"
+	"suricata/SuricataTools"
 	"time"
 
 	"github.com/rs/zerolog/log"
@@ -23,9 +20,9 @@ import (
 
 const Duration = 1 * time.Second
 const ServiceName = "IDS Daemon"
-const PidPath = "/run/suricata/suricata.pid"
+const PidPath = SuricataTools.PidPath
 const TokenEnabled = "EnableSuricata"
-const MainBinary = "/usr/bin/suricata"
+const MainBinary = SuricataTools.MainBinary
 const ProgressF = "suricata.progress"
 
 func Start() error {
@@ -93,13 +90,16 @@ func Start() error {
 	setcapBin := futils.FindProgram("setcap")
 
 	_, _ = futils.ExecuteShell(fmt.Sprintf("%v cap_net_raw,cap_net_admin=eip %v", setcapBin, MainBinary))
-
-	cmd := Commands()
+	if !futils.FileExists("/etc/suricata/suricata.yaml") {
+		log.Warn().Msgf("%v %v no such file, reconfigure...", futils.GetCalleRuntime(), "/etc/suricata/suricata.yaml")
+		_ = httpclient.SuricataAPIUnix("/reconfigure/wait")
+	}
+	cmd := SuricataTools.Commands()
 	log.Info().Msgf("%v Starting [%v]", futils.GetCalleRuntime(), cmd)
 	futils.DeleteFile(PidPath)
 	log.Debug().Msgf("%v [%v]", futils.GetCalleRuntime(), cmd)
 	notifs.BuildProgress(57, "{starting}...", ProgressF)
-	pid, ExecOut, errOut, err := RunSuricata()
+	pid, ExecOut, errOut, err := SuricataTools.RunSuricata()
 
 	out := strings.TrimSpace(errOut) + " " + strings.TrimSpace(ExecOut)
 	log.Debug().Msgf("%v [%v]", futils.GetCalleRuntime(), out)
@@ -119,6 +119,13 @@ func Start() error {
 	}
 
 	if err != nil {
+		if strings.Contains(err.Error(), "found with name pfring") {
+			LibPath := PFRing.PFringSoPath()
+			log.Error().Msgf("%v it seems the pfring library (%v) is not defined in configuration. -> Reconfigure smooth", futils.GetCalleRuntime(), LibPath)
+			_ = httpclient.SuricataAPIUnix("/reconfigure/smooth")
+			return fmt.Errorf("missing library [%v]", LibPath)
+		}
+
 		log.Error().Msgf("%v Failed to start %v [%v]", futils.GetCalleRuntime(), cmd, err)
 		return fmt.Errorf("unable to start %v (%v): [%v]", ServiceName, cmd, out)
 	}
@@ -171,98 +178,5 @@ func removeOldSuricataLogs() {
 				futils.DeleteFile(filePath)
 			}
 		}
-	}
-}
-func Commands() []string {
-	var cm []string
-	cm = append(cm, "--pidfile", "/run/suricata/suricata.pid")
-	cm = append(cm, "--pfring")
-	ifaces := PFRingIfaces.Load()
-	for _, iface := range ifaces {
-		if ipclass.IsInterfaceExists(iface.Iface) {
-			cm = append(cm, fmt.Sprintf("--pfring-int=%v", iface.Iface))
-		}
-	}
-
-	cm = append(cm, "-D")
-	return cm
-}
-func RunSuricata() (int, string, string, error) {
-	const (
-		timeoutTotal = 20 * time.Second
-	)
-
-	// Extract pidfile path from Commands() so we know what to wait for.
-
-	ctx, cancel := context.WithTimeout(context.Background(), timeoutTotal)
-	defer cancel()
-
-	args := Commands()
-	cmd := exec.CommandContext(ctx, MainBinary, args...)
-
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	start := time.Now()
-	if err := cmd.Start(); err != nil {
-		// If context already expired, surface that
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return 0, stdout.String(), stderr.String(), fmt.Errorf("suricata start timed out (pre-start): %w", ctx.Err())
-		}
-		return 0, stdout.String(), stderr.String(), fmt.Errorf("failed to start suricata: %w (stderr: %s)", err, stderr.String())
-	}
-
-	waitErr := make(chan error, 1)
-	go func() { waitErr <- cmd.Wait() }()
-
-	// Wait for launcher process to end or timeout.
-	select {
-	case err := <-waitErr:
-		// Launcher exited (expected with -D). Record remaining time for PID wait.
-		if err != nil && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			// Non-zero exit before daemonizing
-			return 0, stdout.String(), stderr.String(), fmt.Errorf("suricata launcher exited with error: %w (stderr: %s)", err, stderr.String())
-		}
-	case <-ctx.Done():
-		// Launcher did not complete in time; attempt to kill the remaining foreground proc.
-		_ = cmd.Process.Kill()
-		return 0, stdout.String(), stderr.String(), fmt.Errorf("suricata start timed out after %s", timeoutTotal)
-	}
-
-	// Poll for PID file within the remaining time budget.
-	remaining := timeoutTotal - time.Since(start)
-	if remaining <= 0 {
-		return 0, stdout.String(), stderr.String(), fmt.Errorf("suricata started but PID check exceeded %s window", timeoutTotal)
-	}
-
-	pid, err := waitForPIDFile(remaining)
-	if err != nil {
-		// Not fatal in all contexts, but return as error so caller can decide.
-		return 0, stdout.String(), stderr.String(), fmt.Errorf("suricata started, but PID file not ready: %w", err)
-	}
-
-	return pid, stdout.String(), stderr.String(), nil
-}
-func waitForPIDFile(maxWait time.Duration) (int, error) {
-	deadline := time.Now().Add(maxWait)
-	ticker := time.NewTicker(200 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		// Try read
-		if b, err := os.ReadFile(PidPath); err == nil {
-			s := strings.TrimSpace(string(b))
-			if s != "" {
-				if pid, perr := strconv.Atoi(s); perr == nil && pid > 0 {
-					return pid, nil
-				}
-			}
-		}
-		// Check timeout
-		if time.Now().After(deadline) {
-			return 0, fmt.Errorf("pid file %q not found or invalid within %s", PidPath, maxWait)
-		}
-		<-ticker.C
 	}
 }

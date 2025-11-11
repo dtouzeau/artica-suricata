@@ -27,6 +27,10 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+var DroppedEvents int64
+var ReceivedEvents int64
+var GlobalConfig SuriStructs.SuriDaemon
+
 /* =========================
    Configuration (edit here)
    ========================= */
@@ -142,10 +146,16 @@ type EveEvent struct {
 	HTTP         *HTTPInfo       `json:"http,omitempty"`
 	TLS          json.RawMessage `json:"tls,omitempty"`
 	DNS          *DNSEntry       `json:"dns,omitempty"`
+	NDPI         *NDPI           `json:"ndpi,omitempty"`
 	Flow         json.RawMessage `json:"flow,omitempty"`
 	UnhandledRaw json.RawMessage `json:"-"`
 	Count        int             `json:"Count"`
 	ProxyName    string          `json:"ProxyName"`
+}
+type NDPI struct {
+	Protocol   string `json:"protocol"`
+	Category   string `json:"category"`
+	Confidence string `json:"confidence"`
 }
 
 type EveAlert struct {
@@ -299,7 +309,6 @@ func CleanQueueFailed() {
 	}
 
 }
-
 func ParseQueueFailed() {
 	Cfg := SuriStructs.LoadConfig()
 	if Cfg.UseQueueFailed == 0 {
@@ -358,6 +367,14 @@ func parseLine(b []byte) (*EveEvent, error) {
 // handleEvent stores the event in the MD5-keyed map and logs compact info for alerts.
 func handleEvent(ev *EveEvent) {
 	Count := ev.Count
+	ReceivedEvents++
+	if ev.EventType != "alert" {
+		if GlobalConfig.EveLogsType[ev.EventType] == 0 {
+			DroppedEvents++
+			return
+		}
+	}
+
 	h, _, err := eventHash(ev)
 	if err != nil {
 		log.Warn().Msgf("%v event hash error: %v", futils.GetCalleRuntime(), err)
@@ -383,7 +400,7 @@ func handleEvent(ev *EveEvent) {
 func Start() {
 	// Prepare listener socket (remove stale, bind, chmod)
 	_ = os.Remove(InSockPath)
-
+	GlobalConfig = SuriStructs.LoadConfig()
 	ln, err := net.Listen("unix", InSockPath)
 	if err != nil {
 		log.Error().Msgf("%v listen(%s): %v", futils.GetCalleRuntime(), InSockPath, err)
@@ -458,7 +475,7 @@ func Start() {
 		}
 	}()
 
-	log.Info().Msgf("suri-forwarder-parse: listening on %s; workers=%d queue=%d", InSockPath, Workers, QueueSize)
+	log.Info().Msgf("%v listening on %s; workers=%d queue=%d", futils.GetCalleRuntime(), InSockPath, Workers, QueueSize)
 
 	// Accept loop
 	go func() {
@@ -493,6 +510,10 @@ func Start() {
 	close(queue)
 	wg.Wait()
 	log.Info().Msgf("%v bye.", futils.GetCalleRuntime())
+}
+func ReloadConfig() {
+	GlobalConfig = SuriStructs.LoadConfig()
+	log.Info().Msgf("%v done", futils.GetCalleRuntime())
 }
 func handleConn(ctx context.Context, c net.Conn, queue chan<- job, m *metrics) error {
 	sc := bufio.NewScanner(c)

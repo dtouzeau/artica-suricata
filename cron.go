@@ -4,6 +4,7 @@ import (
 	"DashBoard"
 	"DataShieldIPv4Blocklist"
 	"LogForward"
+	"Maintenance"
 	"Update"
 	"logrotate"
 	"suricata"
@@ -12,6 +13,9 @@ import (
 
 func Each2Minutes() {
 	Update.Run()
+}
+func EachMinutes() {
+	Maintenance.CheckSuricataSocket()
 }
 
 func Each5Minutes() {

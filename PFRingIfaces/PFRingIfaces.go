@@ -61,9 +61,39 @@ func Load() []BPFfilter.Settings {
 	}
 	return Res
 }
+func ConfiguredIfaces() []BPFfilter.Settings {
+	var res []BPFfilter.Settings
+
+	ifaces := Load()
+	if len(ifaces) < 1 {
+		suricataInterface := sockets.GET_INFO_STR("SuricataInterface")
+		if suricataInterface == "" {
+			suricataInterface = ipclass.DefaultInterface()
+			var f BPFfilter.Settings
+			f.Iface = suricataInterface
+			res = append(res, f)
+			return res
+		}
+	}
+
+	for _, iface := range ifaces {
+		if !ipclass.IsInterfaceExists(iface.Iface) {
+			continue
+		}
+		ifaceStatus := ipclass.GetInterfaceState(iface.Iface)
+		log.Info().Msgf("%v Interface:%s Status:%s", futils.GetCalleRuntime(), iface.Iface, ifaceStatus)
+		if ifaceStatus != "up" {
+			continue
+		}
+
+		res = append(res, iface)
+	}
+	return res
+}
+
 func Build() string {
 	var f []string
-	ifaces := Load()
+	ifaces := ConfiguredIfaces()
 	f = append(f, fmt.Sprintf("# Listen Interfaces here: PFRING (%v)", futils.GetCalleRuntime()))
 	f = append(f, fmt.Sprintf("# %v Listen Interfaces", futils.GetCalleRuntime()))
 	f = append(f, "# PF_RING configuration. for use with native PF_RING support")
@@ -73,27 +103,15 @@ func Build() string {
 	c := 0
 	f = append(f, "pfring:")
 
-	suricataInterface := sockets.GET_INFO_STR("SuricataInterface")
-	if suricataInterface == "" {
-		suricataInterface = ipclass.DefaultInterface()
-	}
 	TrustedNets := BPFfilter.TrustedNets()
-	// Iterate over query results
+
 	for _, iface := range ifaces {
-		if !ipclass.IsInterfaceExists(iface.Iface) {
-			continue
-		}
 		clid--
 		threadCount := "auto"
 		iface.TrustedNets = TrustedNets
 		if iface.Threads > 0 {
 			threadCount = futils.IntToString(iface.Threads)
 		}
-		if !ipclass.IsInterfaceExists(suricataInterface) {
-			f = append(f, fmt.Sprintf("# %s not found inside the system", suricataInterface))
-			continue
-		}
-
 		f = append(f, fmt.Sprintf("  - interface: %v", iface.Iface))
 		f = append(f, fmt.Sprintf("    cluster-id: %d", clid))
 		f = append(f, fmt.Sprintf("    cluster-type: cluster_flow"))
@@ -109,26 +127,6 @@ func Build() string {
 		f = append(f, fmt.Sprintf("    bpf-filter: \"%v\"", filter))
 		f = append(f, "")
 		c++
-	}
-
-	if c == 0 {
-		f = append(f, fmt.Sprintf("# no interface set, use the default %s", suricataInterface))
-		threadCount := "auto"
-		f = append(f, fmt.Sprintf("  - interface: %s", suricataInterface))
-		f = append(f, fmt.Sprintf("    cluster-id: %d", clid))
-		f = append(f, fmt.Sprintf("    cluster-type: cluster_flow"))
-		f = append(f, fmt.Sprintf("    defrag: yes"))
-		f = append(f, fmt.Sprintf("    use-mmap: yes"))
-		f = append(f, fmt.Sprintf("    tpacket-v3: yes"))
-		f = append(f, fmt.Sprintf("    copy-mode: ips"))
-		f = append(f, fmt.Sprintf("    ring-size: 200000"))
-		f = append(f, fmt.Sprintf("    buffer-size: 32768"))
-		f = append(f, fmt.Sprintf("    enable-zc: no"))
-		f = append(f, fmt.Sprintf("    threads: %v", threadCount))
-		f = append(f, fmt.Sprintf("    # If you also want to see TLS/SNI on :443:"))
-		f = append(f, fmt.Sprintf("    bpf-filter: \"tcp and port 443\""))
-		f = append(f, "")
-
 	}
 
 	return strings.Join(f, "\n")

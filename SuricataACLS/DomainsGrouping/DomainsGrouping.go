@@ -69,3 +69,35 @@ func GetAcls(proto string, pattern string) string {
 	}
 	return strings.TrimSpace(strings.Join(f, " "))
 }
+func BuildGeoIP(Countries []string, GroupType string) string {
+	// find negation first, if there is entries in negation then all will be negated
+	Negation := false
+
+	ttype := make(map[string]string)
+	ttype["geoipsrc"] = "src"
+	ttype["geoipdest"] = "dst"
+	Dir := ttype[GroupType]
+	negChar := ""
+	AllCountries := make(map[string]bool)
+	for _, country := range Countries {
+		if strings.HasPrefix(country, "!") {
+			country = strings.TrimSpace(country[1:])
+			AllCountries[country] = true
+			Negation = true
+			continue
+		}
+		AllCountries[country] = true
+	}
+	var ff []string
+	for ctry, _ := range AllCountries {
+		ff = append(ff, ctry)
+	}
+	if Negation {
+		negChar = "!"
+	}
+	finalRule := fmt.Sprintf("%s geoip %s %s", negChar, Dir, strings.Join(ff, ","))
+	finalRule = strings.TrimSpace(finalRule)
+	finalRule = strings.ReplaceAll(finalRule, ",,", ",")
+	return finalRule
+
+}

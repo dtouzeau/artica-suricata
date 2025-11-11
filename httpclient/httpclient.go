@@ -463,6 +463,41 @@ func NginxAPIUnix(endpoint string) error {
 	return nil
 
 }
+func SuricataAPIUnix(endpoint string) error {
+	socketPath := "/run/suricata-service.sock"
+	transport := &http.Transport{
+		DisableKeepAlives: true,
+		MaxIdleConns:      0,
+		DialContext: func(_ context.Context, _, _ string) (net.Conn, error) {
+			return net.Dial("unix", socketPath)
+		},
+	}
+
+	// Create an HTTP client with the custom transport
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   5 * time.Second, // Set 10-second timeout
+	}
+
+	// Create a new HTTP request
+	req, err := http.NewRequest("GET", fmt.Sprintf("http://localhost%v", endpoint), nil)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("%v Error creating request: %v", futils.GetCalleRuntime(), err))
+	}
+
+	// Send the request
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf(fmt.Sprintf("%v Error sending request: %v", futils.GetCalleRuntime(), err))
+	}
+	defer func(Body io.ReadCloser) {
+		_ = Body.Close()
+
+	}(resp.Body)
+
+	return nil
+
+}
 
 func ReputationInjecterAPIUnix(endpoint string) error {
 	socketPath := "/run/reputation-injecter.sock"

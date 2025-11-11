@@ -3,6 +3,7 @@ package main
 import (
 	"LogForward"
 	"RESTApi"
+	"SuriConf"
 	"SuriStructs"
 	"SuriTables"
 	"flag"
@@ -46,6 +47,7 @@ var CMDClassify = flag.Bool("classify", false, "Build json classification file")
 var CMDRules = flag.Bool("rules", false, "Get rules infos")
 var CMDPostgreSQL = flag.Bool("postgres", false, "PostgreSQL maintenance")
 var CMDAclsExplains = flag.Bool("acls-explains", false, "Fill explain text for acls")
+var CMDChecksocket = flag.Bool("check-socket", false, "Check the listening socket")
 
 func main() {
 
@@ -64,6 +66,7 @@ func main() {
 		_ = suricata.GetVersion()
 		os.Exit(0)
 	}
+
 	_, err := time.LoadLocation(futils.GetTimeZone())
 	if err != nil {
 		log.Error().Msgf("[START]: Load timezone failed: %v", err)
@@ -107,6 +110,8 @@ func main() {
 	go suricata.CheckStartup()
 	go SuriTables.Check()
 	go surirules.CheckRulesCounter()
+	go SuriConf.PatchTables()
+	_, _ = MainCron.AddFunc("* * * * *", EachMinutes)
 	_, _ = MainCron.AddFunc("*/2 * * * *", Each2Minutes)
 	_, _ = MainCron.AddFunc("*/5 * * * *", Each5Minutes)
 	_, _ = MainCron.AddFunc("*/15 * * * *", Each15Minutes)
@@ -158,6 +163,7 @@ func main() {
 			df := SuriStructs.LoadConfig()
 			df.Version = version
 			SuriStructs.SaveConfig(df)
+			SuriConf.PatchTables()
 			go surirules.CheckRulesCounter()
 
 		case <-usr2Chan:

@@ -1,8 +1,12 @@
 package RESTApi
 
 import (
+	"CheckMem"
+	"DataShieldIPv4Blocklist"
 	"LogForward"
+	"PFRing"
 	"Reconfigure"
+	"SuriConf"
 	"SuriStructs"
 	"SuricataACLS"
 	"Update"
@@ -10,9 +14,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"futils"
+	"ipclass"
 	"os"
 	"sockets"
 	"suricata"
+	"suricata/SuricataTools"
 	"surisock"
 	"time"
 
@@ -51,6 +57,28 @@ func RestSuricataRestart(ctx *fasthttp.RequestCtx) {
 	go suricata.Restart()
 	OutTrue(ctx)
 }
+func ReconfigureAndRestart(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	go Reconfigure.ReconfigureAndRestart()
+	OutTrue(ctx)
+}
+
+func ReconfigureAndWait(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	Reconfigure.Run()
+	OutTrue(ctx)
+}
+func ReconfigureSmoothAndWait(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	_ = SuriConf.Build(false)
+	OutTrue(ctx)
+}
 
 func restSuricataReconfigure(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
@@ -66,6 +94,22 @@ func BuildRules(ctx *fasthttp.RequestCtx) {
 	go Reconfigure.BuildRules()
 	OutTrue(ctx)
 }
+func RestReportMemory(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	var data struct {
+		Status  bool                        `json:"Status"`
+		MemInfo CheckMem.MemoryRequirements `json:"MemInfo"`
+	}
+	data.Status = true
+	data.MemInfo = CheckMem.Run()
+	jsonBytes, _ := json.MarshalIndent(data, "", "  ")
+	ctx.Response.Header.Set("Content-Type", "application/json;charset=UTF-8")
+	ctx.SetStatusCode(200)
+	_, _ = fmt.Fprintf(ctx, string(jsonBytes))
+}
+
 func restSuricataReload(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
 		return
@@ -82,6 +126,23 @@ func restSuricataUpdate(ctx *fasthttp.RequestCtx) {
 	}()
 	OutTrue(ctx)
 }
+func GlobalStats(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	var data struct {
+		Status bool   `json:"Status"`
+		Stats  string `json:"Stats"`
+	}
+	data.Status = true
+	_, data.Stats = SuricataTools.DumpStats()
+
+	jsonBytes, _ := json.MarshalIndent(data, "", "  ")
+	ctx.Response.Header.Set("Content-Type", "application/json;charset=UTF-8")
+	ctx.SetStatusCode(200)
+	_, _ = fmt.Fprintf(ctx, string(jsonBytes))
+}
+
 func GlobalStatus(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
 		return
@@ -91,11 +152,31 @@ func GlobalStatus(ctx *fasthttp.RequestCtx) {
 		Error         string                 `json:"Error"`
 		Alerts        int64                  `json:"Alerts"`
 		UpdateTimeOut int64                  `json:"UpdateTimeOut"`
+		Events        int64                  `json:"Events"`
+		EventsRefused int64                  `json:"EventsRefused"`
 		Info          SuriStructs.SuriDaemon `json:"Info"`
+		NDPI          bool                   `json:"NDPI"`
+		Running       bool                   `json:"Running"`
+		Uptime        int64                  `json:"Uptime"`
+		Version       string                 `json:"Version"`
 	}
 	data.Alerts = LogForward.AlertsCount
 	data.Status = true
+	data.Version = sockets.GET_INFO_STR(suricata.TokenVersion)
+
+	PID := SuricataTools.GetPID()
+	if futils.ProcessExists(PID) {
+		a, _ := futils.ProcessAgeInSeconds(PID)
+		data.Running = true
+		data.Uptime = a
+	} else {
+		data.Running = false
+	}
+
 	data.Info = SuriStructs.LoadConfig()
+	data.NDPI = data.Info.NDPIOK
+	data.Events = LogForward.ReceivedEvents
+	data.EventsRefused = LogForward.DroppedEvents
 	data.UpdateTimeOut = Update.TimeToUpdate()
 	jsonBytes, _ := json.MarshalIndent(data, "", "  ")
 	ctx.Response.Header.Set("Content-Type", "application/json;charset=UTF-8")
@@ -104,6 +185,11 @@ func GlobalStatus(ctx *fasthttp.RequestCtx) {
 }
 func restSuricataStats(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
+		return
+	}
+
+	if !futils.UnixSocketExists("/run/suricata/suricata.sock") {
+		OutFalse(ctx, "SOCKET_NOT_FOUND")
 		return
 	}
 
@@ -145,11 +231,13 @@ func restSuricataPfRingPluging(ctx *fasthttp.RequestCtx) {
 		return
 	}
 
-	if !futils.FileExists("/usr/lib/suricata/pfring.so") {
-		OutFalse(ctx, "{PFRING_PLUGIN_NOT_FOUND}")
+	pfringP := PFRing.PFringSoPath()
+
+	if futils.FileExists(pfringP) {
+		OutTrue(ctx)
 		return
 	}
-	OutTrue(ctx)
+	OutFalse(ctx, "{PFRING_PLUGIN_NOT_FOUND}")
 }
 
 func restSuricataPfRing(ctx *fasthttp.RequestCtx) {
@@ -202,6 +290,12 @@ func IfaceList(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
 		return
 	}
+
+	if !futils.UnixSocketExists("/run/suricata/suricata.sock") {
+		OutFalse(ctx, "SOCKET_NOT_FOUND")
+		return
+	}
+
 	zctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -254,6 +348,79 @@ func SetQueueParams(ctx *fasthttp.RequestCtx) {
 	SuriStructs.SaveConfig(Gconf)
 	OutTrue(ctx)
 }
+func SetNDPIParams(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	enabled := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("enabled")))
+	Gconf := SuriStructs.LoadConfig()
+	Gconf.NDPIEnabled = enabled
+	log.Warn().Msgf("%v Edit NDPI integration to %v", futils.GetCalleRuntime(), enabled)
+	SuriStructs.SaveConfig(Gconf)
+	go Reconfigure.ReconfigureAndRestart()
+	OutTrue(ctx)
+}
+
+func SetHomeNetParams(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	net := futils.UrlDecode(fmt.Sprintf("%v", ctx.UserValue("net")))
+	negative := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("negative")))
+	enabled := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("enabled")))
+	Gconf := SuriStructs.LoadConfig()
+	if !ipclass.IsValidIPorCDIRorRange(net) {
+		log.Error().Msgf("%v %v %v", futils.GetCalleRuntime(), net, "Invalid IP or CIDR or Range")
+		return
+	}
+	log.Warn().Msgf("%v Edit network for HOME_NET %v negative=%d, enabled=%d", futils.GetCalleRuntime(), net, negative, enabled)
+	Gconf.HomeNets[net] = SuriStructs.HomeNets{Negative: negative, Enabled: enabled}
+	SuriStructs.SaveConfig(Gconf)
+	go Reconfigure.Smooth()
+	OutTrue(ctx)
+}
+func DelHomeNetParams(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	net := futils.UrlDecode(fmt.Sprintf("%v", ctx.UserValue("net")))
+	log.Warn().Msgf("%v Removed network from HOME_NET %v", futils.GetCalleRuntime(), net)
+	Gconf := SuriStructs.LoadConfig()
+	delete(Gconf.HomeNets, net)
+	SuriStructs.SaveConfig(Gconf)
+	go Reconfigure.Smooth()
+	OutTrue(ctx)
+}
+
+func SetLogTypeParams(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	key := futils.UrlDecode(fmt.Sprintf("%v", ctx.UserValue("key")))
+	value := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("value")))
+	Gconf := SuriStructs.LoadConfig()
+	Gconf.EveLogsType[key] = value
+	SuriStructs.SaveConfig(Gconf)
+	go func() {
+		_ = SuriConf.Build(false)
+	}()
+	OutTrue(ctx)
+}
+
+func SetDataShieldIPv4Blocklist(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	enabled := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("enabled")))
+	Gconf := SuriStructs.LoadConfig()
+	Gconf.DataShieldIPv4Blocklist = enabled
+	SuriStructs.SaveConfig(Gconf)
+	if enabled == 1 {
+		go DataShieldIPv4Blocklist.Run(true)
+	}
+	OutTrue(ctx)
+}
+
 func AclsExplains(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
 		return
@@ -281,9 +448,23 @@ func IfaceState(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	iface := fmt.Sprintf("%v", ctx.UserValue("iface"))
+
+	var data struct {
+		Status bool   `json:"Status"`
+		Error  string `json:"Error"`
+		Info   string `json:"Info"`
+	}
+
 	if iface == "" {
 		OutFalse(ctx, "No interface provided")
+		return
 	}
+
+	if !futils.UnixSocketExists("/run/suricata/suricata.sock") {
+		OutFalse(ctx, "SOCKET_NOT_FOUND")
+		return
+	}
+
 	zctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -298,11 +479,7 @@ func IfaceState(ctx *fasthttp.RequestCtx) {
 		OutFalse(ctx, err.Error())
 		return
 	}
-	var data struct {
-		Status bool   `json:"Status"`
-		Error  string `json:"Error"`
-		Info   string `json:"Info"`
-	}
+
 	data.Status = true
 	data.Info = string(Reply.Message)
 	jsonBytes, _ := json.MarshalIndent(data, "", "  ")

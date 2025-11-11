@@ -1626,7 +1626,7 @@ func ArticaRestLocked() bool {
 }
 func TouchFile(path string) {
 	DeleteFile(path)
-	_ = FilePutContents(path, "# "+TimeStampToString())
+	_ = FilePutContents(path, fmt.Sprintf("# [%v] pid:%d", TimeStampToString(), os.Getpid()))
 }
 func LocatePHP5Bin() string {
 
@@ -4826,12 +4826,22 @@ func IsNumeric(s string) bool {
 }
 
 func UrlDecode(s string) string {
+	const maxIters = 5
+	for i := 0; i < maxIters; i++ {
+		orig := s
 
-	decodedStr, err := url.QueryUnescape(s)
-	if err != nil {
-		return s
+		if t, err := url.QueryUnescape(s); err == nil {
+			s = t
+		}
+		if t, err := url.PathUnescape(s); err == nil {
+			s = t
+		}
+
+		if s == orig {
+			break
+		}
 	}
-	return decodedStr
+	return s
 }
 
 func Base64Decode(content string) string {
@@ -5027,6 +5037,19 @@ func Utf8Encode(s string) string {
 	}
 
 	return string(utf8)
+}
+func UnixSocketExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false
+		}
+		return false
+	}
+	if info.Mode()&os.ModeSocket != 0 {
+		return true
+	}
+	return false
 }
 
 func Utf8Decode(s string) string {

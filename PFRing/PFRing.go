@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"futils"
 	"strings"
+	"time"
 
 	"github.com/rs/zerolog/log"
 )
@@ -31,6 +32,18 @@ type PFringInfo struct {
 	ForceRingLock             string `json:"force_ring_lock"`
 	EnableDebug               string `json:"enable_debug"`
 	TransparentModeDeprecated string `json:"transparent_mode"`
+}
+
+func PFringSoPath() string {
+
+	f := []string{"/usr/lib/suricata/pfring.so"}
+
+	for _, fpath := range f {
+		if futils.FileExists(fpath) {
+			return fpath
+		}
+	}
+	return "/usr/lib/suricata/pfring.so"
 }
 
 func Check() PFringInfo {
@@ -140,4 +153,30 @@ func parseModuleInfo(data string) (PFringInfo, error) {
 	}
 
 	return module, nil
+}
+func Unload() bool {
+
+	if !futils.IsModulesLoaded("pf_ring") {
+		return true
+	}
+
+	rmmod := futils.FindProgram("rmmod")
+	cmdline := fmt.Sprintf("%v pf_ring", rmmod)
+
+	err, out := futils.ExecuteShell(cmdline)
+	if err != nil {
+		log.Error().Msgf("%v [%v]", futils.GetCalleRuntime(), out)
+		return true
+
+	}
+
+	for i := 0; i < 5; i++ {
+		if !futils.IsModulesLoaded("pf_ring") {
+			break
+		}
+		_, _ = futils.ExecuteShell(cmdline)
+		time.Sleep(1 * time.Second)
+	}
+	return true
+
 }

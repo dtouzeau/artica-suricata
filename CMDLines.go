@@ -2,6 +2,7 @@ package main
 
 import (
 	"LogForward"
+	"Maintenance"
 	"PFRing"
 	"Reconfigure"
 	"SuriTables"
@@ -22,6 +23,14 @@ func ParseCmdLines() {
 		SuricataACLS.SetACLsExplain()
 		SuricataACLS.BuildACLs()
 		os.Exit(0)
+	}
+	if *CMDChecksocket {
+		if Maintenance.CheckSuricataSocket() {
+			fmt.Println("OK")
+			os.Exit(0)
+		}
+		fmt.Println("KO")
+		os.Exit(1)
 	}
 
 	if *CMDPostgreSQL {
@@ -57,7 +66,7 @@ func ParseCmdLines() {
 		os.Exit(0)
 	}
 	if *cmdstopsuricata {
-		suricata.Stop()
+		SuricataTools.Stop()
 		os.Exit(0)
 	}
 	if *cmdstartsuricata {

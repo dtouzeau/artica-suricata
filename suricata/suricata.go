@@ -3,8 +3,10 @@ package suricata
 import (
 	"CacheMem"
 	"GlobalsValues"
+	"LogForward"
 	"PFRing"
 	"SuriConf"
+	"SuriStructs"
 	"SuriTables"
 	"SuricataService"
 	"Update"
@@ -104,6 +106,7 @@ func CheckStartup() {
 	}
 	pid := GetPID()
 	if futils.ProcessExists(pid) {
+		SuriStructs.NDPICheckVer()
 		return
 	}
 	log.Warn().Msgf("%v Suricata not running, Start it..", futils.GetCalleRuntime())
@@ -210,7 +213,7 @@ func CheckSuricataInMemory() bool {
 			Cmdline := futils.ProcessCommandLine(pid)
 			text := fmt.Sprintf("Detected PID %d with command line %v", pid, Cmdline)
 			notifs.SquidAdminMysql(1, "Stopping IDS service ( not enabled)", text, "CheckSuricataInMemory", 15)
-			return Stop()
+			return SuricataTools.Stop()
 		}
 		return true
 	}
@@ -288,65 +291,10 @@ func RemoveOlds() {
 // /usr/share/artica-postfix/exec.suricata-fw.php --purge
 // /usr/share/artica-postfix/exec.suricata.dashboard.php
 
-func UnloadPFring() bool {
-
-	if !futils.IsModulesLoaded("pf_ring") {
-		return true
-	}
-
-	rmmod := futils.FindProgram("rmmod")
-	cmdline := fmt.Sprintf("%v pf_ring", rmmod)
-
-	err, out := futils.ExecuteShell(cmdline)
-	if err != nil {
-		log.Error().Msgf("%v [%v]", futils.GetCalleRuntime(), out)
-		return true
-
-	}
-
-	for i := 0; i < 5; i++ {
-		if !futils.IsModulesLoaded("pf_ring") {
-			break
-		}
-		_, _ = futils.ExecuteShell(cmdline)
-		time.Sleep(1 * time.Second)
-	}
-	return true
-
-}
 func GetPID() int {
 	return SuricataTools.GetPID()
 }
-func Stop() bool {
 
-	pid := GetPID()
-
-	if !futils.ProcessExists(pid) {
-		log.Debug().Msgf("%v Already stopped", futils.GetCalleRuntime())
-		return UnloadPFring()
-	}
-	log.Warn().Msgf("%v kill Pid %d", futils.GetCalleRuntime(), pid)
-	futils.KillSmoothProcess(pid)
-
-	for i := 0; i < 5; i++ {
-		time.Sleep(Duration)
-		pid := GetPID()
-		if !futils.ProcessExists(pid) {
-			log.Info().Msgf("%v Stopping.. %vc [SUCCESS]", futils.GetCalleRuntime(), ServiceName)
-			return UnloadPFring()
-		}
-		log.Info().Msgf("%v Stopping...Redis server pid %v %v/5", futils.GetCalleRuntime(), pid, i)
-		futils.StopProcess(pid)
-	}
-
-	pid = GetPID()
-
-	if !futils.ProcessExists(pid) {
-		return UnloadPFring()
-	}
-	return false
-
-}
 func Status(Watchdog bool) string {
 
 	if Watchdog {
@@ -374,7 +322,7 @@ func Status(Watchdog bool) string {
 }
 func Restart() {
 	notifs.BuildProgress(15, "{restarting} {stopping}", ProgressF)
-	if !Stop() {
+	if !SuricataTools.Stop() {
 		notifs.BuildProgress(110, "{restarting} {stopping} {failed}", ProgressF)
 		return
 	}
@@ -389,5 +337,6 @@ func Restart() {
 
 func Reload() {
 	SuricataTools.Reload()
+	LogForward.ReloadConfig()
 
 }

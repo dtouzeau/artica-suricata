@@ -49,6 +49,8 @@ func Run() {
 	if EnableSuricata == 0 {
 		return
 	}
+
+	SuriStructs.NDPICheckVer()
 	SuricataUpdateInterval := sockets.GET_INFO_INT("SuricataUpdateInterval")
 	if SuricataUpdateInterval == 0 {
 		SuricataUpdateInterval = 1440

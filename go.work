@@ -46,5 +46,8 @@ use (
 	SuricataACLS/DomainsGrouping
 	Update/DataShieldIPv4Blocklist
 	Update/IPSets
+	Maintenance
+	IPEthtool
+	CheckMem
 
 )

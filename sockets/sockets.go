@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"os/user"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"github.com/leeqvip/gophp"
-	"github.com/redis/go-redis/v9"
 	"github.com/rs/zerolog/log"
 )
 
@@ -152,23 +150,7 @@ func fileGetContents(filename string) string {
 	tk = bytes.TrimSpace(tk)
 	return string(tk)
 }
-func InitializeMemCacheClient() *redis.Client {
-	client := redis.NewClient(&redis.Options{
-		Network: "unix",
-		Addr:    "/run/redis/redis.sock",
-	})
 
-	_, err := client.Ping(ctx).Result()
-	if err != nil {
-		//log.Error().Msgf("%v Error connecting to Redis: %v", getCalleRuntime(), err)
-		return nil
-	}
-
-	return client
-}
-func GetMemCacheClient() *redis.Client {
-	return InitializeMemCacheClient()
-}
 func StrToInt64(svalue string) int64 {
 	svalue = strings.TrimSpace(svalue)
 	n, err := strconv.ParseInt(svalue, 10, 64)
@@ -199,11 +181,7 @@ func DELETE_KEY(key string) {
 	_ = os.Remove(tfile)
 }
 func DelKey(key string) {
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return
-	}
-	_ = mcClient.Del(ctx, key).Err()
+	_ = ValkeyDelKey(key)
 }
 func SET_MAP1(key string, m map[string]string) {
 	var buf bytes.Buffer
@@ -264,110 +242,16 @@ func SET_INFO_STR(key string, svalue string) bool {
 
 }
 func ListAllKeys() {
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		fmt.Println("ListAllKeys() Error: client is nil")
-	}
-	keys, err := mcClient.Keys(ctx, "*").Result()
-	if err != nil {
-		log.Error().Msgf("ListAllKeys: Error keys: %v", err)
-	}
-	for _, TargetKey := range keys {
-		val, _ := mcClient.Get(ctx, TargetKey).Result()
-
-		ttl, err := mcClient.TTL(ctx, TargetKey).Result()
-		if err != nil {
-			log.Error().Err(err).Msgf("TTL(%s)", TargetKey)
-			continue
-		}
-
-		switch {
-		case ttl == -2*time.Second:
-			// key does not exist
-			fmt.Printf("%s\tmissing\n", TargetKey)
-		case ttl == -1*time.Second:
-			// key exists but has no expiration
-			fmt.Printf("%s\t(no expiry)\tval=%d bytes\n", TargetKey, len(val))
-		default:
-			// key has an expiration
-			expAt := time.Now().Add(ttl)
-			fmt.Printf("%s\tTTL=%s\tExpiresAt=%s\tval=%q\n", TargetKey, ttl, expAt.Format(time.RFC3339), val)
-		}
-
-	}
+	ValkeyListAllKeys()
 
 }
 
 func resetallKeys() error {
-	mcClient := GetMemCacheClient()
-	log.Warn().Msgf("resetallKeys: Clean all keys...")
-	if mcClient == nil {
-		return fmt.Errorf("resetallKeys() Error: client is nil")
-	}
-	keys, err := mcClient.Keys(ctx, "*").Result()
-
-	if err != nil {
-		log.Error().Msgf("resetallKeys: Error keys: %v", err)
-	}
-	for _, TargetKey := range keys {
-		if !strings.HasPrefix(TargetKey, "SET:") {
-			continue
-		}
-
-		if strings.HasPrefix(TargetKey, "PHPREDIS") {
-			continue
-		}
-
-		mcClient.Del(ctx, TargetKey)
-	}
-	_ = SweepAsync(ctx, mcClient)
-
-	return nil
-}
-func SweepAsync(ctx context.Context, c *redis.Client) error {
-	// Returns a simple string reply like "OK" (implementation-defined).
-	res, err := c.Do(ctx, "SWEEP", "ASYNC").Text()
-	if err != nil {
-		return fmt.Errorf("SWEEP ASYNC: %w", err)
-	}
-	log.Info().Msgf("pogocache sweep async: %s", res)
-	return nil
+	return ValkeyResetallKeys(ctx)
 }
 
 func resetRedisKeys() error {
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return fmt.Errorf("resetRedisKeys() Error: client is nil")
-	}
-
-	var cursor uint64
-	var keys []string
-
-	// Iterate using SCAN until the cursor returns 0
-	for {
-		var err error
-		var k []string
-		k, cursor, err = mcClient.Scan(ctx, cursor, "SET:*", 10).Result()
-		if err != nil {
-			if strings.Contains(err.Error(), "unknown command") {
-				return resetallKeys()
-			}
-			log.Error().Msgf("resetRedisKeys: Error scanning keys: %v", err)
-		}
-
-		keys = append(keys, k...)
-		if cursor == 0 {
-			break
-		}
-	}
-	for _, TargetKey := range keys {
-		if strings.HasPrefix(TargetKey, "PHPREDIS") {
-			continue
-		}
-
-		mcClient.Del(ctx, TargetKey)
-	}
-	return nil
+	return ValkeyResetallKeys(ctx)
 }
 func memcacheGet(key string) (error, string) {
 
@@ -375,21 +259,10 @@ func memcacheGet(key string) (error, string) {
 		key = fmt.Sprintf("SET:%v", key)
 	}
 
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return fmt.Errorf("memcacheGet() Error: client is nil"), ""
-	}
+	err, sitem := ValkeyGetValue(key)
 
-	defer func(mcClient *redis.Client) {
-		_ = mcClient.Close()
-	}(mcClient)
-
-	sitem, err := mcClient.Get(ctx, key).Result()
-
-	if errors.Is(err, redis.Nil) {
-		return fmt.Errorf("key not found"), ""
-	} else if err != nil {
-		log.Error().Msgf("Error getting key: %v %v", key, err)
+	if err != nil {
+		log.Error().Msgf("%v Error getting key: %v %v", getCalleRuntime(), key, err)
 		return err, ""
 	}
 	return nil, sitem
@@ -432,156 +305,38 @@ func MemCacheGetMap(sKey string) map[int]map[string]int {
 	return retrievedMap
 }
 func MemCacheSetMap(sKey string, MapArray map[int]map[string]int, MaxTimeSec int) bool {
-	mcClient := GetMemCacheClient()
-
-	if mcClient == nil {
-		log.Error().Msgf("%v mcClient is nil !!", getCalleRuntime())
-		return false
-	}
-	if ctx == nil {
-		log.Error().Msgf("%v Context is nil in MemCacheSetMap", getCalleRuntime())
-		return false
-	}
-
-	if !strings.HasPrefix(sKey, "SET:") {
-		sKey = fmt.Sprintf("SET:%v", sKey)
-	}
-	if MaxTimeSec == 0 {
-		MaxTimeSec = 300
-	}
-	defer func(mcClient *redis.Client) {
-		err := mcClient.Close()
-		if err != nil {
-
-		}
-	}(mcClient)
-
-	ttl := time.Duration(MaxTimeSec) * time.Second
-
-	jsonData, err := json.Marshal(MapArray)
-	if err != nil {
-		log.Error().Msgf("%v [%v] Error serializing map: %v", getCalleRuntime(), sKey, err.Error())
-		return false
-	}
-
-	status := mcClient.Set(ctx, sKey, jsonData, ttl)
-
-	if err := status.Err(); err != nil {
-		log.Error().Msgf("%v Error setting key: %v", getCalleRuntime(), err)
-		return false
-	}
-
-	return true
-
+	return ValkeyMemCacheSetMap(ctx, sKey, MapArray, MaxTimeSec)
 }
 func SaveFreeKey(Key, value string, ExpireMins int) {
 	FinalExpire := time.Duration(ExpireMins) * time.Second
-	c := NeMemCache()
-	c.Set(Key, value)
-
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return
-	}
-	defer func(mcClient *redis.Client) {
-		_ = mcClient.Close()
-	}(mcClient)
-
-	status := mcClient.Set(ctx, Key, value, FinalExpire)
-	if err := status.Err(); err != nil {
-		log.Error().Msgf("%v Error setting key: %v", getCalleRuntime(), err)
-		return
-	}
+	_ = ValkeySetValue(Key, value, FinalExpire)
 }
 func RemoveCache(key string) {
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return
-	}
-	defer func(mcClient *redis.Client) {
-		_ = mcClient.Close()
-	}(mcClient)
-
-	mcClient.Del(ctx, key)
+	ValkeyDelKey(key)
 }
 func SetCache(key, value string) bool {
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
+	err := ValkeySetValue(key, value, expiration)
+	if err != nil {
+		log.Error().Msgf("%v %v", getCalleRuntime(), err.Error())
 		return false
 	}
-	defer func(mcClient *redis.Client) {
-		_ = mcClient.Close()
-	}(mcClient)
-
-	status := mcClient.Set(ctx, key, value, expiration)
-	if err := status.Err(); err != nil {
-		log.Error().Msgf("%v Error setting key: %v", getCalleRuntime(), err)
-		return false
-	}
-
 	return true
 }
 func SetCacheTime(key, value string, TimeMin int) bool {
 	value = strings.TrimSpace(value)
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return false
-	}
-
 	zExpiration := time.Duration(TimeMin) * time.Minute
-
-	c := NeMemCache()
-	c.Set(key, value)
-
-	defer func(mcClient *redis.Client) {
-		_ = mcClient.Close()
-	}(mcClient)
-
-	status := mcClient.Set(ctx, key, value, zExpiration)
-	if err := status.Err(); err != nil {
-		log.Error().Msgf("%v Error setting key: %v", getCalleRuntime(), err)
+	err := ValkeySetValue(key, value, zExpiration)
+	if err != nil {
+		log.Error().Msgf("%v %v", getCalleRuntime(), err.Error())
 		return false
 	}
-
 	return true
 }
 func ListKeys(search string) (error, []string) {
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return fmt.Errorf("CountKeys() Error: client is nil"), []string{}
-	}
-	defer func(mcClient *redis.Client) {
-		err := mcClient.Close()
-		if err != nil {
-
-		}
-	}(mcClient)
-
-	keys, err := mcClient.Keys(ctx, search).Result()
-	if err != nil {
-		return fmt.Errorf("CountKeys() Error fetching keys: %v", err), []string{}
-	}
-
-	return nil, keys
+	return ValkeyListKeys(search)
 }
 func CountKeys(search string) (error, int) {
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return fmt.Errorf("CountKeys() Error: client is nil"), 0
-	}
-	defer func(mcClient *redis.Client) {
-		err := mcClient.Close()
-		if err != nil {
-
-		}
-	}(mcClient)
-
-	keys, err := mcClient.Keys(ctx, search).Result()
-	if err != nil {
-		return fmt.Errorf("CountKeys() Error fetching keys: %v", err), 0
-	}
-
-	return nil, len(keys)
+	return ValkeyCountKeys(search)
 }
 func GetCache(key string) (error, string) {
 
@@ -592,21 +347,9 @@ func GetCache(key string) (error, string) {
 		}
 	}
 
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return fmt.Errorf("GetCache() Error: client is nil"), ""
-	}
-
-	defer func(mcClient *redis.Client) {
-		_ = mcClient.Close()
-
-	}(mcClient)
-	sitem, err := mcClient.Get(ctx, key).Result()
-
-	if err == redis.Nil {
-		return fmt.Errorf("key not found"), ""
-	} else if err != nil {
-		log.Error().Msgf("Error getting key: %v %v", key, err)
+	err, sitem := ValkeyGetValue(key)
+	if err != nil {
+		log.Error().Msgf("%v Error getting key: %v %v", getCalleRuntime(), key, err)
 		return err, ""
 	}
 	sitem = strings.TrimSpace(sitem)
@@ -620,20 +363,10 @@ func MemcacheSetDel(skey string) bool {
 	if !strings.HasPrefix(skey, "SET:") {
 		skey = fmt.Sprintf("SET:%v", skey)
 	}
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		log.Error().Msgf("memcacheDel: client is nil")
-		return false
-	}
-	defer func(mcClient *redis.Client) {
-		err := mcClient.Close()
-		if err != nil {
 
-		}
-	}(mcClient)
-	log.Debug().Msgf("%v Remove Key %v", getCalleRuntime(), skey)
-	status := mcClient.Del(ctx, skey)
-	if err := status.Err(); err != nil {
+	err := ValkeyDelKey(skey)
+
+	if err != nil {
 		log.Error().Msgf("%v Error deleting key: %v", getCalleRuntime(), err)
 		return false
 	}
@@ -644,17 +377,8 @@ func memcacheSet(skey string, svalue string) bool {
 	if !strings.HasPrefix(skey, "SET:") {
 		skey = fmt.Sprintf("SET:%v", skey)
 	}
-	mcClient := GetMemCacheClient()
-	if mcClient == nil {
-		return false
-	}
-
-	defer func(mcClient *redis.Client) {
-		_ = mcClient.Close()
-	}(mcClient)
-	status := mcClient.Set(ctx, skey, svalue, expiration)
-
-	if err := status.Err(); err != nil {
+	err := ValkeySetValue(skey, svalue, expiration)
+	if err != nil {
 		log.Error().Msgf("%v Error setting key: %v", getCalleRuntime(), err)
 		return false
 	}

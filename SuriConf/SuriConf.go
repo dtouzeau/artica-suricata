@@ -2,6 +2,8 @@ package SuriConf
 
 import (
 	"BPFfilter"
+	"LogForward"
+	"PFRing"
 	"PFRingIfaces"
 	"SqliteConns"
 	"SuriStructs"
@@ -50,7 +52,10 @@ func fixClassificationsFile() {
 func Build(BuildRules bool) error {
 
 	if futils.FileExists(LockFile) {
-		return fmt.Errorf("suricata configuration is locked by another process")
+		Mins := futils.FileTimeMin(LockFile)
+		if Mins < 5 {
+			return fmt.Errorf("suricata configuration is locked by another process since %d minutes ago", Mins)
+		}
 	}
 	futils.TouchFile(LockFile)
 	defer futils.DeleteFile(LockFile)
@@ -67,14 +72,26 @@ func Build(BuildRules bool) error {
 
 	futils.CreateDir("/etc/suricata/iprep")
 	futils.CreateDir("/etc/suricata/rules")
+	//
+	notifs.BuildProgress(53, "Classification...", "suricata.reconfigure.progress")
 	fixClassificationsFile()
 
 	if BuildRules {
+		notifs.BuildProgress(54, "{rules}", "suricata.reconfigure.progress")
 		err := DumpRules()
 		if err != nil {
 			return err
 		}
 	}
+	Gconf := SuriStructs.LoadConfig()
+	PfRingSo := PFRing.PFringSoPath()
+	notifs.BuildProgress(55, "{reconfiguring}", "suricata.reconfigure.progress")
+	if len(PfRingSo) < 3 {
+		log.Error().Msgf("%v pfring.so not found: [%v]", futils.GetCalleRuntime(), PfRingSo)
+		futils.DeleteFile("/etc/suricata/suricata.yaml")
+		return fmt.Errorf("pfring.so not found: [%v]", PfRingSo)
+	}
+	log.Info().Msgf("%v pfring.so path=[%v]", futils.GetCalleRuntime(), PfRingSo)
 
 	// Constructing the configuration file contents
 	var f []string
@@ -84,7 +101,7 @@ func Build(BuildRules bool) error {
 	f = append(f, "default-log-dir: /var/log/suricata/")
 	f = append(f, ``)
 	f = append(f, `plugins:`)
-	f = append(f, "  - /usr/lib/suricata/pfring.so")
+	f = append(f, fmt.Sprintf("  - %v", PfRingSo))
 	f = append(f, ``)
 	f = append(f, `stats:`)
 	f = append(f, `  enabled: yes`)
@@ -97,8 +114,15 @@ func Build(BuildRules bool) error {
 	f = append(f, "      filename: /run/suricata/alerts.sock")
 	f = append(f, "      format: json")
 	f = append(f, "      types:")
-	ztypes := []string{"alert", "flow", "stats", "dns", "ssh"}
-	for _, ztype := range ztypes {
+	f = append(f, fmt.Sprintf("        - %v", "alert"))
+
+	for ztype, value := range Gconf.EveLogsType {
+		if ztype == "alert" {
+			continue
+		}
+		if value == 0 {
+			continue
+		}
 		f = append(f, fmt.Sprintf("        - %v", ztype))
 	}
 	f = append(f, "        - http2:")
@@ -279,7 +303,7 @@ func Build(BuildRules bool) error {
 	f = append(f, `    device-id: 0`)
 	f = append(f, `    cuda-streams: 2`)
 	f = append(f, ``)
-
+	notifs.BuildProgress(56, "{reconfiguring} HyperScan", "suricata.reconfigure.progress")
 	_, algo := hyperScan()
 	f = append(f, fmt.Sprintf("mpm-algo: %v", algo))
 	f = append(f, ``)
@@ -434,14 +458,16 @@ func Build(BuildRules bool) error {
 	reputationFiles := []string{"alienvault.list", "emergingthreatspro.list", "usom.list",
 		"firehol_level1.list", "blocklist_de_strongips.list", "cibadguys.list", "otx.list", "dsipv4.list",
 	}
-
+	notifs.BuildProgress(57, "{reconfiguring} {reputations}", "suricata.reconfigure.progress")
 	for _, fname := range reputationFiles {
 		if !futils.FileExists(fmt.Sprintf("%v/%v", "/etc/suricata/iprep", fname)) {
 			futils.TouchFile(fmt.Sprintf("%v/%v", "/etc/suricata/iprep", fname))
 		}
 		f = append(f, fmt.Sprintf("  - %v", fname))
 	}
+	notifs.BuildProgress(58, "{reconfiguring} {reputations}", "suricata.reconfigure.progress")
 	IPRepRules()
+	notifs.BuildProgress(59, "{reconfiguring} {categories}", "suricata.reconfigure.progress")
 	IPRepCategories()
 	HostOsPolicy := []string{}
 	AllLocalIPs := ipclass.AllLocalIPs()
@@ -489,6 +515,13 @@ func Build(BuildRules bool) error {
 	f = append(f, ``)
 	f = append(f, `app-layer:`)
 	f = append(f, `  protocols:`)
+	if Gconf.NDPIOK {
+		if Gconf.NDPIEnabled == 1 {
+			f = append(f, `    ndpi:`)
+			f = append(f, `      enabled: yes`)
+		}
+	}
+
 	f = append(f, `    tls:`)
 	f = append(f, `      enabled: yes`)
 	f = append(f, `      detection-ports:`)
@@ -628,11 +661,9 @@ func Build(BuildRules bool) error {
 	//SuricataTools.FixDuplicateRules()
 	log.Debug().Msgf("%v threshold", futils.GetCalleRuntime())
 	_ = threshold()
-	log.Debug().Msgf("%v buildClassification", futils.GetCalleRuntime())
-	buildClassification()
 	log.Debug().Msgf("%v Buildsyslog", futils.GetCalleRuntime())
 	Buildsyslog()
-
+	LogForward.ReloadConfig()
 	SourcesFiles := []string{"/etc/suricata/suricata.yaml",
 		"/etc/suricata/threshold.config"}
 	var md51 string
@@ -647,6 +678,7 @@ func Build(BuildRules bool) error {
 	if md51 == md52 {
 		return nil
 	}
+	notifs.BuildProgress(75, "{reconfiguring} {checking}", "suricata.reconfigure.progress")
 	log.Debug().Msgf("%v CheckConfig", futils.GetCalleRuntime())
 	err := CheckConfig(tmpfile)
 	if err != nil {
@@ -661,21 +693,21 @@ func Build(BuildRules bool) error {
 	return nil
 }
 func AllVars() string {
-
+	Gconf := SuriStructs.LoadConfig()
 	TrustedNets := BPFfilter.TrustedNets()
 	trustedNet := TrustedNets
-	trustedNet["127.0.0.1"] = true
 
-	homeNet := make(map[string]bool)
-	homeNet["192.168.0.0/16"] = true
-	homeNet["10.0.0.0/8"] = true
-	homeNet["172.16.0.0/12"] = true
+	homeNet := Gconf.HomeNets
+	homeNet["127.0.0.0/8"] = SuriStructs.HomeNets{Negative: 0, Enabled: 1}
 
 	var HOME_NET []string
 	var z []string
-	for ips, _ := range homeNet {
+	for ips, Conf := range homeNet {
 		ips = strings.TrimSpace(ips)
 		if ips == "" {
+			continue
+		}
+		if Conf.Enabled == 0 {
 			continue
 		}
 		if !ipclass.IsValidIPorCDIRorRange(ips) {
@@ -686,6 +718,9 @@ func AllVars() string {
 		}
 		if ips == "0.0.0.0/0" {
 			continue
+		}
+		if Conf.Negative == 1 {
+			ips = "!" + ips
 		}
 		HOME_NET = append(HOME_NET, ips)
 	}
@@ -1002,12 +1037,18 @@ func dumpEnabledRules(db *sql.DB, outPath string) (written int, err error) {
 
 	w := bufio.NewWriterSize(tmp, 256*1024) // 256 KiB buffer
 	C := 0
+	oldprc := 0
 	for rows.Next() {
 		var raw string
 		C++
-		prc := int(float64(C) / float64(Max) * 100)
-		if prc > 5 && prc < 95 {
-			notifs.BuildProgress(prc, fmt.Sprintf("%d/%d", C, Max), DumpRulesPF)
+
+		prc := int(int(float64(C) / float64(Max) * 100))
+		if prc != oldprc {
+			oldprc = prc
+			notifs.BuildProgress(55, fmt.Sprintf("{rules}: %v%% %d/%d", prc, C, Max), "suricata.reconfigure.progress")
+			if prc > 5 && prc < 95 {
+				notifs.BuildProgress(prc, fmt.Sprintf("%d/%d", C, Max), DumpRulesPF)
+			}
 		}
 
 		if err = rows.Scan(&raw); err != nil {

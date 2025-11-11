@@ -90,7 +90,13 @@ func buildRouter() *router.Router {
 	r := router.New()
 	r.GET("/reload", logRequest(ReloadMe))
 	r.GET("/status", logRequest(GlobalStatus))
+	r.GET("/stats", logRequest(GlobalStats))
+
+	r.GET("/reconrestart", logRequest(ReconfigureAndRestart))
+	r.GET("/reconfigure/wait", logRequest(ReconfigureAndWait))
+	r.GET("/reconfigure/smooth", logRequest(ReconfigureSmoothAndWait))
 	r.GET("/build/rules", logRequest(BuildRules))
+	r.GET("/report/memory", logRequest(RestReportMemory))
 	r.GET("/suricata/install", logRequest(RestSuricataInstall))
 	r.GET("/suricata/uninstall", logRequest(RestSuricataUninstall))
 	r.GET("/suricata/restart", logRequest(RestSuricataRestart))
@@ -108,8 +114,12 @@ func buildRouter() *router.Router {
 	r.GET("/debug/pprof/{profile:*}", logRequest(pprofhandler.PprofHandler))
 	r.GET("/otx/save/{ApiKey}/{MaxPages}/{OtxEnabled}", logRequest(OtxSave))
 	r.GET("/config/queue/{queuepath}/{enabled}", logRequest(SetQueueParams))
+	r.GET("/config/homenet/{net}/{negative}/{enabled}", logRequest(SetHomeNetParams))
+	r.GET("/config/homenet-del/{net}", logRequest(DelHomeNetParams))
+	r.GET("/config/ndpi-enable/{enabled}", logRequest(SetNDPIParams))
+	r.GET("/config/log-types/{key}/{value}", logRequest(SetLogTypeParams))
 	r.GET("/rules/stats", logRequest(RulesStats))
 	r.GET("/acls/explains", logRequest(AclsExplains))
-
+	r.GET("/config/DataShieldIPv4Blocklist/{enabled}", logRequest(SetDataShieldIPv4Blocklist))
 	return r
 }

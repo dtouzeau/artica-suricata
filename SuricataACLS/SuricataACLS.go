@@ -33,6 +33,10 @@ type SuriACLS struct {
 	DestinationPortsExplain   string `json:"DestinationPortsExplain"`
 	DestinationDomains        string `json:"DestinationDomains"`
 	DestinationDomainsExplain string `json:"DestinationDomainsExplain"`
+	DestinationGEO            string `json:"DestinationGEO"`
+	DestinationGEOExplain     string `json:"DestinationGEOExplain"`
+	SourceGEO                 string `json:"SourceGEO"`
+	SourceGEOExplain          string `json:"SourceGEOExplain"`
 	Direction                 int    `json:"Direction"`
 	Count                     int    `json:"Count"`
 	Seconds                   int    `json:"Seconds"`
@@ -77,6 +81,8 @@ func GetACLs() []SuriACLS {
 		acl.Destination, acl.DestinationExpl = aclsGroup(acl.ID, "dst")
 		acl.DestinationDomains, acl.DestinationDomainsExplain = aclsGroup(acl.ID, "dstdomain")
 		acl.DestinationPorts, acl.DestinationPortsExplain = aclsGroup(acl.ID, "port")
+		acl.DestinationGEO, acl.DestinationGEOExplain = aclsGroup(acl.ID, "geoipdest")
+		acl.SourceGEO, acl.SourceGEOExplain = aclsGroup(acl.ID, "geoipsrc")
 		tables = append(tables, acl)
 	}
 	return tables
@@ -152,6 +158,9 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 		if GroupType == "dstdomain" {
 			Items = getItemsDomainsFromGpid(db, gpid)
 		}
+		if GroupType == "geoipsrc" {
+			Items = getItemsGeoFromGpid(db, gpid)
+		}
 
 		for _, item := range Items {
 			log.Debug().Msgf("%v Cleaning %v", futils.GetCalleRuntime(), item)
@@ -167,6 +176,9 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 		}
 		if GroupType == "port" {
 			Items = getItemsPortsFromGpid(db, gpid, 1)
+		}
+		if GroupType == "geoipsrc" || GroupType == "geoipdest" {
+			Items = getItemsGeoFromGpid(db, gpid)
 		}
 
 		for _, item := range Items {
@@ -212,7 +224,16 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 			return R, strings.Join(explanations, " {or} ")
 		}
 		return "", ""
-
+	}
+	if GroupType == "geoipsrc" || GroupType == "geoipdest" {
+		if len(final) == 0 {
+			return "", ""
+		}
+		R := DomainsGrouping.BuildGeoIP(final, GroupType)
+		if len(R) > 0 {
+			return R, strings.Join(explanations, " {and} ")
+		}
+		return "", ""
 	}
 
 	return "", ""
@@ -298,6 +319,37 @@ func getItemsNetworkFromGpid(db *sql.DB, gpid int) []string {
 		if !ipclass.IsValidIPorCDIRorRange(Pattern) {
 			continue
 		}
+		r = append(r, Pattern)
+	}
+
+	return r
+}
+func getItemsGeoFromGpid(db *sql.DB, gpid int) []string {
+	query := `SELECT pattern FROM webfilters_sqitems WHERE gpid=? and enabled=1`
+	rows, err := db.Query(query, gpid)
+
+	if err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		return []string{}
+	}
+	defer func(rows *sql.Rows) {
+		_ = rows.Close()
+	}(rows)
+
+	var r []string
+	for rows.Next() {
+		var pattern sql.NullString
+		err := rows.Scan(&pattern)
+		if err != nil {
+			continue
+		}
+		Pattern := strings.TrimSpace(pattern.String)
+		if len(Pattern) < 2 {
+			continue
+		}
+
+		Pattern = strings.ToUpper(Pattern)
+
 		r = append(r, Pattern)
 	}
 
@@ -407,6 +459,12 @@ func SetACLsExplain() {
 		} else {
 			zobjetcs = append(zobjetcs, "{flow} <strong>{all}</strong>")
 		}
+		if len(acl.SourceGEOExplain) > 1 {
+			zobjetcs = append(zobjetcs, "{geoipsrc} "+acl.SourceGEOExplain)
+		}
+		if len(acl.DestinationGEOExplain) > 1 {
+			zobjetcs = append(zobjetcs, "{geoipdest} "+acl.DestinationGEOExplain)
+		}
 
 		if acl.Count > 1 && acl.Seconds > 0 {
 			zobjetcs = append(zobjetcs, fmt.Sprintf("{OnlyAfter} %d {times} {during} %d {seconds}", acl.Count, acl.Seconds))
@@ -475,6 +533,11 @@ func BuildACLs() []string {
 				continue
 			}
 		}
+		if len(acl.DestinationGEO) > 3 && len(acl.SourceGEO) > 3 {
+			ztime := futils.TimeStampToString()
+			rows[acl.ID] = "ERROR: " + ztime + " --> {geo_not_mix_srcdst}"
+			continue
+		}
 
 		metadata = append(metadata, fmt.Sprintf("signature_severity %v", prioMeta[acl.Priority]))
 		if acl.Created > 0 {
@@ -521,6 +584,13 @@ func BuildACLs() []string {
 		}
 		if len(acl.Target) > 0 {
 			opts = append(opts, acl.Target)
+		}
+
+		if len(acl.DestinationGEO) > 3 {
+			opts = append(opts, acl.DestinationGEO)
+		}
+		if len(acl.SourceGEO) > 3 {
+			opts = append(opts, acl.SourceGEO)
 		}
 		if acl.Count > 1 && acl.Seconds > 0 {
 			opts = append(opts, fmt.Sprintf("threshold:type limit, track by_src, count %d, seconds %d", acl.Count, acl.Seconds))
