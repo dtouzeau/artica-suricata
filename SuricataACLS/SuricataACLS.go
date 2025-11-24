@@ -5,10 +5,14 @@ import (
 	"SuricataACLS/CheckArule"
 	"SuricataACLS/DomainsGrouping"
 	"SuricataACLS/PortsGrouping"
+	"bufio"
 	"database/sql"
 	"fmt"
 	"futils"
 	"ipclass"
+	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -44,6 +48,8 @@ type SuriACLS struct {
 	Flow                      string `json:"Flow"`
 	Classtype                 string `json:"Classtype"`
 	Created                   int64  `json:"Created"`
+	ITypes                    string `json:"ITypes"`
+	ITypesExplain             string `json:"ITypesExplain"`
 }
 
 func GetACLs() []SuriACLS {
@@ -78,11 +84,13 @@ func GetACLs() []SuriACLS {
 			acl.Priority = 1
 		}
 		acl.Source, acl.ExplainSource = aclsGroup(acl.ID, "src")
-		acl.Destination, acl.DestinationExpl = aclsGroup(acl.ID, "dst")
+		acl.Destination, acl.DestinationExpl = aclsGroup(acl.ID, "dst,dstserv")
+		log.Info().Msgf("%v ACL %v DEST=(%v)", futils.GetCalleRuntime(), acl.Name, acl.Destination)
 		acl.DestinationDomains, acl.DestinationDomainsExplain = aclsGroup(acl.ID, "dstdomain")
 		acl.DestinationPorts, acl.DestinationPortsExplain = aclsGroup(acl.ID, "port")
 		acl.DestinationGEO, acl.DestinationGEOExplain = aclsGroup(acl.ID, "geoipdest")
 		acl.SourceGEO, acl.SourceGEOExplain = aclsGroup(acl.ID, "geoipsrc")
+		acl.ITypes, acl.ITypesExplain = aclsGroup(acl.ID, "itype")
 		tables = append(tables, acl)
 	}
 	return tables
@@ -99,14 +107,25 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 	defer func(db *sql.DB) {
 		_ = db.Close()
 	}(db)
+
+	FilterGroup := fmt.Sprintf("webfilters_sqgroups.GroupType='%v'", GroupType)
+	if strings.Contains(GroupType, ",") {
+		zgrp := strings.Split(GroupType, ",")
+		var tb []string
+		for _, Gptype := range zgrp {
+			tb = append(tb, fmt.Sprintf("webfilters_sqgroups.GroupType='%v'", Gptype))
+		}
+		FilterGroup = fmt.Sprintf("( %v )", strings.Join(tb, " OR "))
+	}
+
 	log.Debug().Msgf("%v Query GroupType:%v from rule id %d", futils.GetCalleRuntime(), GroupType, aclid)
-	query := `SELECT suricata_sqacllinks.negation,suricata_sqacllinks.gpid,webfilters_sqgroups.GroupName FROM suricata_sqacllinks,webfilters_sqgroups WHERE 
+	query := fmt.Sprintf(`SELECT suricata_sqacllinks.negation,suricata_sqacllinks.gpid,webfilters_sqgroups.GroupName,webfilters_sqgroups.GroupType FROM suricata_sqacllinks,webfilters_sqgroups WHERE 
 				suricata_sqacllinks.gpid=webfilters_sqgroups.ID
 			    AND webfilters_sqgroups.enabled=1
-				AND webfilters_sqgroups.GroupType=?
-				AND aclid=? ORDER BY zOrder`
+				AND %v AND aclid=? ORDER BY zOrder`, FilterGroup)
 
-	rows, err := db.Query(query, GroupType, aclid)
+	log.Debug().Msgf("%v Query [%v]", futils.GetCalleRuntime(), query)
+	rows, err := db.Query(query, aclid)
 	if err != nil {
 		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
 		return "", fmt.Sprintf("<span class='text-danger'>Error %v</span>", err.Error())
@@ -115,16 +134,17 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 		_ = rows.Close()
 	}(rows)
 
-	var positif []int
-	var negatif []int
+	var positif []string
+	var negatif []string
 	var explanations []string
 
 	for rows.Next() {
 		var gpid int
 		var GroupName string
 		var negation sql.NullInt32
+		var GroupType string
 
-		err := rows.Scan(&negation, &gpid, &GroupName)
+		err := rows.Scan(&negation, &gpid, &GroupName, &GroupType)
 		if err != nil {
 			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
 			continue
@@ -134,11 +154,11 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 
 		if negation.Int32 == 0 {
 			explanations = append(explanations, fmt.Sprintf("<span %v OnClick=\"Loadjs('fw.rules.items.php?groupid=%d&TableLink=suricata_sqacllinks&IDS=1');\">%v ({%v})</span>", OnMouse, gpid, GroupName, GroupType))
-			positif = append(positif, gpid)
+			positif = append(positif, fmt.Sprintf("%v|%v", gpid, GroupType))
 			continue
 		}
 		explanations = append(explanations, fmt.Sprintf("<span %v OnClick=\"Loadjs('fw.rules.items.php?groupid=%d&TableLink=suricata_sqacllinks&IDS=1');\">{not} %v ({%v})</span>", OnMouse, gpid, GroupName, GroupType))
-		negatif = append(negatif, gpid)
+		negatif = append(negatif, fmt.Sprintf("%v|%v", gpid, GroupType))
 	}
 	NumberOfGroups := 0
 	Clean1 := make(map[string]bool)
@@ -146,8 +166,17 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 	var final []string
 	var Items []string
 
-	for _, gpid := range positif {
+	for _, gpidPattern := range positif {
 		NumberOfGroups++
+		tb := strings.Split(gpidPattern, "|")
+		GroupType := tb[1]
+		gpid := futils.StrToInt(tb[0])
+		log.Info().Msgf("%v find items for Group id:%d (%v) = \"%v\"", futils.GetCalleRuntime(), gpid, GroupType, gpidPattern)
+
+		if GroupType == "dstserv" {
+			Items = append(Items, `$SERVER_IP`)
+		}
+
 		if GroupType == "dst" || GroupType == "src" {
 			Items = getItemsNetworkFromGpid(db, gpid)
 			log.Debug().Msgf("%v find items for Group %d %v = %d", futils.GetCalleRuntime(), gpid, GroupType, len(Items))
@@ -161,6 +190,9 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 		if GroupType == "geoipsrc" {
 			Items = getItemsGeoFromGpid(db, gpid)
 		}
+		if GroupType == "itype" {
+			Items = getItemsIntegerFromGpid(db, gpid)
+		}
 
 		for _, item := range Items {
 			log.Debug().Msgf("%v Cleaning %v", futils.GetCalleRuntime(), item)
@@ -168,8 +200,16 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 		}
 	}
 
-	for _, gpid := range negatif {
+	for _, gpidPattern := range negatif {
 		NumberOfGroups++
+		tb := strings.Split(gpidPattern, "|")
+		GroupType := tb[1]
+		gpid := futils.StrToInt(tb[0])
+
+		if GroupType == "dstserv" {
+			Items = append(Items, `!$SERVER_IP`)
+		}
+
 		if GroupType == "dst" || GroupType == "src" {
 			Items = getItemsNetworkFromGpid(db, gpid)
 			log.Debug().Msgf("%v NEGATIVE Group %d %v Items %v", futils.GetCalleRuntime(), gpid, GroupType, len(Items))
@@ -179,6 +219,10 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 		}
 		if GroupType == "geoipsrc" || GroupType == "geoipdest" {
 			Items = getItemsGeoFromGpid(db, gpid)
+		}
+
+		if GroupType == "itype" {
+			Items = getItemsIntegerFromGpid(db, gpid)
 		}
 
 		for _, item := range Items {
@@ -196,7 +240,8 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 			final = append(final, k)
 		}
 	}
-	if GroupType == "dst" || GroupType == "src" {
+	log.Debug().Msgf("%v GroupType:%v Items %v --> {%v}", futils.GetCalleRuntime(), GroupType, strings.Join(positif, ","), final)
+	if GroupType == "dst" || GroupType == "src" || GroupType == "dstserv" || GroupType == "dst,dstserv" {
 		if len(final) == 0 {
 			log.Debug().Msgf("%v finally, no items after %d groups", futils.GetCalleRuntime(), NumberOfGroups)
 			return "", ""
@@ -230,6 +275,16 @@ func aclsGroup(aclid int, GroupType string) (string, string) {
 			return "", ""
 		}
 		R := DomainsGrouping.BuildGeoIP(final, GroupType)
+		if len(R) > 0 {
+			return R, strings.Join(explanations, " {and} ")
+		}
+		return "", ""
+	}
+	if GroupType == "itype" {
+		if len(final) == 0 {
+			return "", ""
+		}
+		R := DomainsGrouping.BuiliTypes(final)
 		if len(R) > 0 {
 			return R, strings.Join(explanations, " {and} ")
 		}
@@ -355,6 +410,34 @@ func getItemsGeoFromGpid(db *sql.DB, gpid int) []string {
 
 	return r
 }
+func getItemsIntegerFromGpid(db *sql.DB, gpid int) []string {
+	query := `SELECT pattern FROM webfilters_sqitems WHERE gpid=? and enabled=1`
+
+	rows, err := db.Query(query, gpid)
+	if err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		return []string{}
+	}
+	defer func(rows *sql.Rows) {
+		_ = rows.Close()
+	}(rows)
+
+	var r []string
+	for rows.Next() {
+		var pattern sql.NullString
+		err := rows.Scan(&pattern)
+		if err != nil {
+			continue
+		}
+		Pattern := strings.TrimSpace(pattern.String)
+		if !futils.IsNumeric(Pattern) {
+			continue
+		}
+		r = append(r, Pattern)
+	}
+
+	return r
+}
 func getItemsDomainsFromGpid(db *sql.DB, gpid int) []string {
 	query := `SELECT pattern FROM webfilters_sqitems WHERE gpid=? and enabled=1`
 
@@ -465,6 +548,9 @@ func SetACLsExplain() {
 		if len(acl.DestinationGEOExplain) > 1 {
 			zobjetcs = append(zobjetcs, "{geoipdest} "+acl.DestinationGEOExplain)
 		}
+		if len(acl.ITypesExplain) > 1 {
+			zobjetcs = append(zobjetcs, "{itype} "+acl.ITypesExplain)
+		}
 
 		if acl.Count > 1 && acl.Seconds > 0 {
 			zobjetcs = append(zobjetcs, fmt.Sprintf("{OnlyAfter} %d {times} {during} %d {seconds}", acl.Count, acl.Seconds))
@@ -524,6 +610,9 @@ func BuildACLs() []string {
 		proto := acl.Proto
 		if proto == "" {
 			proto = "ip"
+		}
+		if len(acl.ITypes) > 2 {
+			proto = "icmp"
 		}
 
 		if len(acl.DestinationDomains) > 3 {
@@ -592,6 +681,10 @@ func BuildACLs() []string {
 		if len(acl.SourceGEO) > 3 {
 			opts = append(opts, acl.SourceGEO)
 		}
+		if len(acl.ITypes) > 2 {
+			opts = append(opts, acl.ITypes)
+		}
+
 		if acl.Count > 1 && acl.Seconds > 0 {
 			opts = append(opts, fmt.Sprintf("threshold:type limit, track by_src, count %d, seconds %d", acl.Count, acl.Seconds))
 		}
@@ -606,7 +699,9 @@ func BuildACLs() []string {
 		// always at the end for ";"
 		opts = append(opts, fmt.Sprintf("metadata:%v;", strings.Join(metadata, ", ")))
 		FinalRule := fmt.Sprintf("%s (%s)", prefix, strings.Join(opts, "; "))
+		FinalRule = strings.ReplaceAll(FinalRule, ";;", ";")
 		rows[acl.ID] = FinalRule
+		final = append(final, fmt.Sprintf("# P:%d", acl.ID))
 		final = append(final, FinalRule)
 	}
 
@@ -654,4 +749,37 @@ func RuleSIDPrefix(id int, prefix int, pad int) string {
 func FormatTimestamp(ts int64) string {
 	t := time.Unix(ts, 0).Local()
 	return t.Format("2006_01_02")
+}
+func LoadAdminRulePNumbers() map[int]bool {
+	const rulesPath = "/etc/suricata/rules/Admin.rules"
+
+	f, err := os.Open(rulesPath)
+	if err != nil {
+		return map[int]bool{}
+	}
+	defer func(f *os.File) {
+		_ = f.Close()
+	}(f)
+	pMap := make(map[int]bool)
+	re := regexp.MustCompile(`^#\s*P\s*:\s*([0-9]+)`)
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		m := re.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		n, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		pMap[n] = true
+	}
+
+	if err := scanner.Err(); err != nil {
+		return pMap
+	}
+
+	return pMap
 }

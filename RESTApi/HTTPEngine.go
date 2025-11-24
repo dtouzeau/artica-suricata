@@ -96,6 +96,9 @@ func buildRouter() *router.Router {
 	r.GET("/reconfigure/wait", logRequest(ReconfigureAndWait))
 	r.GET("/reconfigure/smooth", logRequest(ReconfigureSmoothAndWait))
 	r.GET("/build/rules", logRequest(BuildRules))
+	r.GET("/build/acls", logRequest(BuildAdminRules))
+	r.GET("/acls/current", logRequest(GetAdminRulesIndexes))
+
 	r.GET("/report/memory", logRequest(RestReportMemory))
 	r.GET("/suricata/install", logRequest(RestSuricataInstall))
 	r.GET("/suricata/uninstall", logRequest(RestSuricataUninstall))
@@ -117,6 +120,7 @@ func buildRouter() *router.Router {
 	r.GET("/config/homenet/{net}/{negative}/{enabled}", logRequest(SetHomeNetParams))
 	r.GET("/config/homenet-del/{net}", logRequest(DelHomeNetParams))
 	r.GET("/config/ndpi-enable/{enabled}", logRequest(SetNDPIParams))
+	r.GET("/config/wazuh-enable/{enabled}", logRequest(SetWazuhEnable))
 	r.GET("/config/log-types/{key}/{value}", logRequest(SetLogTypeParams))
 	r.GET("/rules/stats", logRequest(RulesStats))
 	r.GET("/acls/explains", logRequest(AclsExplains))

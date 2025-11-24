@@ -7,6 +7,7 @@ import (
 	"PFRingIfaces"
 	"SqliteConns"
 	"SuriStructs"
+	"SuricataACLS"
 	"apostgres"
 	"bufio"
 	"bytes"
@@ -439,6 +440,7 @@ func Build(BuildRules bool) error {
 	//f = append(f, writePersoRule())
 	RulePath := "/etc/suricata/rules"
 	futils.CreateDir(RulePath)
+	f = append(f, " - Admin.rules")
 	f = append(f, " - Production.rules")
 	f = append(f, " - iprep.rules")
 	f = append(f, "")
@@ -447,6 +449,9 @@ func Build(BuildRules bool) error {
 	f = append(f, "")
 	if !futils.FileExists("/etc/suricata/rules/Production.rules") {
 		futils.TouchFile("/etc/suricata/rules/Production.rules")
+	}
+	if !futils.FileExists("/etc/suricata/rules/Admin.rules") {
+		futils.TouchFile("/etc/suricata/rules/Admin.rules")
 	}
 
 	f = append(f, AllVars())
@@ -744,12 +749,25 @@ func AllVars() string {
 	if len(HOME_NET) == 0 {
 		HOME_NET = []string{"127.0.0.0/8", "192.168.0.0/16", "10.0.0.0/8", "172.16.0.0/12"}
 	}
+	MyIps := ipclass.AllLocalIPs()
+	var SERVER_IP []string
+	for _, IpAddr := range MyIps {
+		if IpAddr == "127.0.0.1" || IpAddr == "::1" {
+			continue
+		}
+		if strings.HasPrefix(IpAddr, "127.0.") {
+			continue
+		}
+		SERVER_IP = append(SERVER_IP, IpAddr)
+	}
+
 	var f []string
 	f = append(f, `# Holds variables that would be used by the engine.`)
 	f = append(f, `vars:`)
 	f = append(f, `  address-groups:`)
 	f = append(f, fmt.Sprintf("    HOME_NET: \"[%v]\"", strings.Join(HOME_NET, ",")))
 	f = append(f, fmt.Sprintf("    TRUSTED_NET: \"[%v]\"", strings.Join(z, ",")))
+	f = append(f, fmt.Sprintf("    SERVER_IP: \"[%v]\"", strings.Join(SERVER_IP, ",")))
 	f = append(f, `    EXTERNAL_NET: "!$HOME_NET"`)
 	f = append(f, `    HTTP_SERVERS: "$HOME_NET"`)
 	f = append(f, `    SMTP_SERVERS: "$HOME_NET"`)
@@ -979,7 +997,15 @@ func PatchTables() {
 
 }
 
+func DumpACLs() {
+	Lines := SuricataACLS.BuildACLs()
+	outPath := "/etc/suricata/rules/Admin.rules"
+	futils.FilePutContents(outPath, strings.Join(Lines, "\n")+"\n")
+}
+
 func DumpRules() error {
+	notifs.BuildProgress(5, "{building}", DumpRulesPF)
+	DumpACLs()
 	db, err := SqliteConns.SuricataRulesConnectRO()
 	if err != nil {
 		notifs.BuildProgress(110, err.Error(), DumpRulesPF)
@@ -990,7 +1016,7 @@ func DumpRules() error {
 		_ = db.Close()
 	}(db)
 	outPath := "/etc/suricata/rules/Production.rules"
-	notifs.BuildProgress(5, "{building}", DumpRulesPF)
+	notifs.BuildProgress(6, "{building}", DumpRulesPF)
 	n, err := dumpEnabledRules(db, outPath)
 	if err != nil {
 		notifs.BuildProgress(110, err.Error(), DumpRulesPF)

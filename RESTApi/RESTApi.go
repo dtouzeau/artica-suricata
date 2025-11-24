@@ -5,6 +5,7 @@ import (
 	"DataShieldIPv4Blocklist"
 	"LogForward"
 	"PFRing"
+	"PFRingIfaces"
 	"Reconfigure"
 	"SuriConf"
 	"SuriStructs"
@@ -94,6 +95,29 @@ func BuildRules(ctx *fasthttp.RequestCtx) {
 	go Reconfigure.BuildRules()
 	OutTrue(ctx)
 }
+func BuildAdminRules(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	go Reconfigure.BuildAdminRules()
+	OutTrue(ctx)
+}
+func GetAdminRulesIndexes(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	var data struct {
+		Status bool         `json:"Status"`
+		Rules  map[int]bool `json:"rules"`
+	}
+	data.Status = true
+	data.Rules = SuricataACLS.LoadAdminRulePNumbers()
+	jsonBytes, _ := json.MarshalIndent(data, "", "  ")
+	ctx.Response.Header.Set("Content-Type", "application/json;charset=UTF-8")
+	ctx.SetStatusCode(200)
+	_, _ = fmt.Fprintf(ctx, string(jsonBytes))
+}
+
 func RestReportMemory(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
 		return
@@ -292,6 +316,12 @@ func IfaceList(ctx *fasthttp.RequestCtx) {
 	}
 
 	if !futils.UnixSocketExists("/run/suricata/suricata.sock") {
+
+		List := PFRingIfaces.Load()
+		if len(List) == 0 {
+			OutFalse(ctx, "NO_INTERFACE_SET")
+		}
+
 		OutFalse(ctx, "SOCKET_NOT_FOUND")
 		return
 	}
@@ -358,6 +388,21 @@ func SetNDPIParams(ctx *fasthttp.RequestCtx) {
 	log.Warn().Msgf("%v Edit NDPI integration to %v", futils.GetCalleRuntime(), enabled)
 	SuriStructs.SaveConfig(Gconf)
 	go Reconfigure.ReconfigureAndRestart()
+	OutTrue(ctx)
+}
+func SetWazuhEnable(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	enabled := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("enabled")))
+	Gconf := SuriStructs.LoadConfig()
+	Gconf.Wazuh.Enabled = enabled
+	if len(Gconf.Wazuh.UnixSocket) < 3 {
+		Gconf.Wazuh.UnixSocket = "/var/ossec/queue/sockets/queue"
+	}
+	log.Warn().Msgf("%v Edit Wazuh integration to %v", futils.GetCalleRuntime(), enabled)
+	SuriStructs.SaveConfig(Gconf)
+	go LogForward.ReloadConfig()
 	OutTrue(ctx)
 }
 

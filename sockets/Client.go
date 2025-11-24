@@ -5,19 +5,30 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/syslog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"github.com/bradfitz/gomemcache/memcache"
 	"github.com/valkey-io/valkey-go"
 )
 
+var CnxCount int64
+var UseMemCacheClient int64 // if set to 1, use memcache protocol instead of redis protocol
+
 var (
-	mu  sync.Mutex
-	cli valkey.Client                                         // interface; nil until initialized
-	dsn = "unix:///run/redis/redis.sock?db=0&dial_timeout=2s" // or tcp://127.0.0.1:6379
+	mu                  sync.Mutex
+	cli                 valkey.Client    // interface; nil until initialized
+	mcCli               *memcache.Client // memcache client
+	primaryDSN          = "unix:///run/redis/redis.sock?db=0&dial_timeout=2s"
+	fallbackDSN         = "redis://127.0.0.1:6379?db=0&dial_timeout=2s"
+	currentDSN          = primaryDSN // tracks which DSN is currently in use
+	memcacheUnixSocket  = "/run/artmem.sock"
+	memcacheTCPServer   = "127.0.0.1:11155"
+	currentMemcacheAddr = memcacheUnixSocket
 )
 
 func buildClient() valkey.Client {
@@ -33,17 +44,105 @@ func buildClient() valkey.Client {
 	if cli != nil && pingOK(cli) {
 		return cli
 	}
+	if currentDSN == primaryDSN {
+		if _, err := os.Stat("/run/redis/redis.sock"); os.IsNotExist(err) {
+			currentDSN = fallbackDSN
+		}
+	}
 
-	c, err := valkey.NewClient(valkey.MustParseURL(dsn))
-	if err != nil {
-		return nil
+	CnxCount++
+	c, err := valkey.NewClient(valkey.MustParseURL(currentDSN))
+	if err == nil && pingOK(c) {
+		cli = c
+		return cli
 	}
-	if !pingOK(c) {
+	if c != nil {
 		c.Close()
-		return nil
 	}
-	cli = c
-	return cli
+
+	// If current DSN failed, try fallback
+	var fallbackToTry string
+	if currentDSN == primaryDSN {
+		fallbackToTry = fallbackDSN
+		TosyslogGen(fmt.Sprintf("Unix socket connection failed, attempting TCP fallback: %s", fallbackToTry))
+	} else {
+		fallbackToTry = primaryDSN
+		TosyslogGen(fmt.Sprintf("TCP connection failed, attempting Unix socket: %s", fallbackToTry))
+	}
+	CnxCount++
+	c, err = valkey.NewClient(valkey.MustParseURL(fallbackToTry))
+	if err == nil && pingOK(c) {
+		currentDSN = fallbackToTry
+		cli = c
+		TosyslogGen(fmt.Sprintf("Successfully connected using: %s", currentDSN))
+		return cli
+	}
+	if c != nil {
+		c.Close()
+	}
+	TosyslogGen("Both Unix socket and TCP connection failed")
+	return nil
+}
+
+func buildMemcacheClient() *memcache.Client {
+	// Fast path: already initialized and test if it works
+	if mcCli != nil {
+		// Quick health check
+		if err := mcCli.Ping(); err == nil {
+			return mcCli
+		}
+		// If ping failed, close and reconnect
+		mcCli = nil
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Double-check after acquiring the lock
+	if mcCli != nil {
+		if err := mcCli.Ping(); err == nil {
+			return mcCli
+		}
+		mcCli = nil
+	}
+
+	// Try current address (Unix socket by default)
+	CnxCount++
+	mcCli = memcache.New(currentMemcacheAddr)
+	// Configure for single keepalive connection
+	mcCli.Timeout = 2 * time.Second
+	mcCli.MaxIdleConns = 1 // Single persistent connection
+
+	// Test connection with a ping
+	if err := mcCli.Ping(); err == nil {
+		TosyslogGen(fmt.Sprintf("Memcache client connected to: %s (single keepalive)", currentMemcacheAddr))
+		return mcCli
+	}
+
+	// If current address failed, try fallback
+	var fallbackAddr string
+	if currentMemcacheAddr == memcacheUnixSocket {
+		fallbackAddr = memcacheTCPServer
+		TosyslogGen(fmt.Sprintf("Memcache Unix socket failed, attempting TCP fallback: %s", fallbackAddr))
+	} else {
+		fallbackAddr = memcacheUnixSocket
+		TosyslogGen(fmt.Sprintf("Memcache TCP failed, attempting Unix socket: %s", fallbackAddr))
+	}
+
+	CnxCount++
+	mcCli = memcache.New(fallbackAddr)
+	// Configure for single keepalive connection
+	mcCli.Timeout = 2 * time.Second
+	mcCli.MaxIdleConns = 1 // Single persistent connection
+
+	if err := mcCli.Ping(); err == nil {
+		currentMemcacheAddr = fallbackAddr
+		TosyslogGen(fmt.Sprintf("Memcache successfully connected using: %s (single keepalive)", currentMemcacheAddr))
+		return mcCli
+	}
+
+	TosyslogGen("Both Memcache Unix socket and TCP connection failed")
+	return nil
 }
 func Close() {
 	mu.Lock()
@@ -60,6 +159,26 @@ func pingOK(c valkey.Client) bool {
 	return c.Do(ctx, c.B().Ping().Build()).Error() == nil
 }
 func ValkeySetValue(key, value string, ttl time.Duration) error {
+	if UseMemCacheClient == 1 {
+		// Use memcache client
+		mc := buildMemcacheClient()
+		if mc == nil {
+			return errors.New("memcache client not available")
+		}
+
+		item := &memcache.Item{
+			Key:   key,
+			Value: []byte(value),
+		}
+
+		if ttl > 0 {
+			item.Expiration = int32(ttl.Seconds())
+		}
+
+		return mc.Set(item)
+	}
+
+	// Use Redis/Valkey protocol
 	c := buildClient()
 	if c == nil {
 		return errors.New("valkey client not available")
@@ -71,14 +190,22 @@ func ValkeySetValue(key, value string, ttl time.Duration) error {
 	if ttl > 0 {
 		// precise expiration
 		err = c.Do(ctx, c.B().Set().Key(key).Value(value).Ex(ttl).Build()).Error()
-		// If your valkey-go version prefers milliseconds, use:
-		// err = c.Do(ctx, c.B().Set().Key(key).Value(value).Px(ttl).Build()).Error()
 	} else {
 		err = c.Do(ctx, c.B().Set().Key(key).Value(value).Build()).Error()
 	}
 	return err
 }
 func ValkeyDelKey(key string) error {
+	if UseMemCacheClient == 1 {
+		// Use memcache client
+		mc := buildMemcacheClient()
+		if mc == nil {
+			return errors.New("memcache client not available")
+		}
+		return mc.Delete(key)
+	}
+
+	// Use Redis/Valkey protocol
 	c := buildClient()
 	if c == nil {
 		return errors.New("valkey client not available")
@@ -90,6 +217,25 @@ func ValkeyDelKey(key string) error {
 	return c.Do(ctx, c.B().Del().Key(key).Build()).Error()
 }
 func ValkeyGetValue(key string) (error, string) {
+	if UseMemCacheClient == 1 {
+		// Use memcache client
+		mc := buildMemcacheClient()
+		if mc == nil {
+			return errors.New("memcache client not available"), ""
+		}
+
+		item, err := mc.Get(key)
+		if err != nil {
+			// Missing key => not an error for us: return empty string
+			if err == memcache.ErrCacheMiss {
+				return nil, ""
+			}
+			return fmt.Errorf("- ValkeyGetValue [%v]", err), ""
+		}
+		return nil, string(item.Value)
+	}
+
+	// Use Redis/Valkey protocol
 	c := buildClient()
 	if c == nil {
 		return errors.New("valkey client not available"), ""
@@ -113,20 +259,26 @@ func ValkeyListAllKeys() {
 		fmt.Println("ValkeyListAllKeys() Error: client is nil")
 		return
 	}
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if UseMemCacheClient == 1 {
+		TosyslogGen("ValkeyListAllKeys() not supported in memcache protocol mode")
+		return
+	}
 
 	var cursor uint64
 	for {
 		// SCAN cursor MATCH * COUNT 1000
 		res := c.Do(ctx, c.B().Scan().Cursor(cursor).Match("*").Count(1000).Build())
 		if err := res.Error(); err != nil {
-			log.Error().Err(err).Msg("SCAN error")
+			TosyslogGen(fmt.Sprintf("SCAN error: %v", err))
 			return
 		}
 
 		arr, err := res.ToArray()
 		if err != nil || len(arr) != 2 {
-			log.Error().Err(err).Msg("unexpected SCAN response")
+			TosyslogGen(fmt.Sprintf("unexpected SCAN response %v", arr))
 			return
 		}
 
@@ -146,7 +298,7 @@ func ValkeyListAllKeys() {
 			// TTL (seconds): -2=missing, -1=no expiry, ≥0=ttl seconds
 			ttlRes := c.Do(ctx, c.B().Ttl().Key(TargetKey).Build())
 			if err := ttlRes.Error(); err != nil {
-				log.Error().Err(err).Msgf("TTL(%s)", TargetKey)
+				TosyslogGen(fmt.Sprintf("TTL error: %v for [%v]", err, TargetKey))
 				continue
 			}
 			ttlSec, _ := ttlRes.ToInt64()
@@ -171,9 +323,20 @@ func ValkeyListAllKeys() {
 }
 func ValkeyResetallKeys(ctx context.Context) error {
 	c := buildClient()
-	log.Warn().Msg("resetallKeys: Clean all keys...")
+	TosyslogGen(fmt.Sprintf("Reseting all keys"))
 	if c == nil {
 		return fmt.Errorf("resetallKeys() Error: client is nil")
+	}
+
+	if UseMemCacheClient == 1 {
+		// Memcache protocol doesn't support key scanning
+		// Use FLUSHDB to clear all keys
+		TosyslogGen("Using FLUSHDB for memcache protocol mode")
+		cmd := c.B().Arbitrary("FLUSHDB").Build()
+		if err := c.Do(ctx, cmd).Error(); err != nil {
+			return fmt.Errorf("FLUSHDB error: %w", err)
+		}
+		return nil
 	}
 
 	var cursor uint64
@@ -202,7 +365,7 @@ func ValkeyResetallKeys(ctx context.Context) error {
 			}
 
 			if err := c.Do(ctx, c.B().Del().Key(key).Build()).Error(); err != nil {
-				log.Error().Err(err).Msgf("DEL(%s)", key)
+				TosyslogGen(fmt.Sprintf("DEL(%s) failed: %v", key, err))
 			}
 		}
 
@@ -231,13 +394,8 @@ func ValkeySweepAsync(ctx context.Context, c valkey.Client) error {
 	return nil
 }
 func ValkeyMemCacheSetMap(ctx context.Context, sKey string, mapArray map[int]map[string]int, maxTimeSec int) bool {
-	c := buildClient()
-	if c == nil {
-		log.Error().Msg("MemCacheSetMap: valkey client is nil")
-		return false
-	}
 	if ctx == nil {
-		log.Error().Msg("MemCacheSetMap: context is nil")
+		TosyslogGen("MemCacheSetMap: context is nil")
 		return false
 	}
 
@@ -250,16 +408,42 @@ func ValkeyMemCacheSetMap(ctx context.Context, sKey string, mapArray map[int]map
 
 	jsonData, err := json.Marshal(mapArray)
 	if err != nil {
-		log.Error().Err(err).Msgf("MemCacheSetMap[%s]: marshal error", sKey)
+		TosyslogGen(fmt.Sprintf("MemCacheSetMap[%s]: marshal error", sKey))
+		return false
+	}
+
+	if UseMemCacheClient == 1 {
+		// Use memcache client
+		mc := buildMemcacheClient()
+		if mc == nil {
+			TosyslogGen("MemCacheSetMap: memcache client is nil")
+			return false
+		}
+
+		item := &memcache.Item{
+			Key:        sKey,
+			Value:      jsonData,
+			Expiration: int32(maxTimeSec),
+		}
+
+		if err := mc.Set(item); err != nil {
+			TosyslogGen(fmt.Sprintf("MemCacheSetMap[%s]: SET failed", sKey))
+			return false
+		}
+		return true
+	}
+
+	// Use Redis/Valkey protocol
+	c := buildClient()
+	if c == nil {
+		TosyslogGen("MemCacheSetMap: valkey client is nil")
 		return false
 	}
 
 	ttl := time.Duration(maxTimeSec) * time.Second
-
-	// SET key value [EX ttl]
 	cmd := c.B().Set().Key(sKey).Value(string(jsonData)).Ex(ttl).Build()
 	if err := c.Do(ctx, cmd).Error(); err != nil {
-		log.Error().Err(err).Msgf("MemCacheSetMap[%s]: SET failed", sKey)
+		TosyslogGen(fmt.Sprintf("MemCacheSetMap[%s]: SET failed", sKey))
 		return false
 	}
 	return true
@@ -270,11 +454,18 @@ func ValkeyListKeys(search string) (error, []string) {
 		return fmt.Errorf("ListKeys() Error: client is nil"), nil
 	}
 
+	if UseMemCacheClient == 1 {
+		// Memcache protocol doesn't support key scanning
+		// Return error indicating this operation is not supported
+		return fmt.Errorf("ListKeys() not supported in memcache protocol mode"), nil
+	}
+
 	var (
 		cursor uint64
 		out    []string
 	)
-
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	for {
 		// SCAN cursor MATCH <search> COUNT 1000
 		res := c.Do(ctx, c.B().Scan().Cursor(cursor).Match(search).Count(1000).Build())
@@ -312,6 +503,13 @@ func ValkeyCountKeys(search string) (error, int) {
 	if search == "" {
 		search = "*"
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if UseMemCacheClient == 1 {
+		// Memcache protocol doesn't support key scanning
+		// Return error indicating this operation is not supported
+		return fmt.Errorf("CountKeys() not supported in memcache protocol mode"), 0
+	}
 
 	var (
 		cursor uint64
@@ -345,4 +543,57 @@ func ValkeyCountKeys(search string) (error, int) {
 	}
 
 	return nil, count
+}
+
+// ValkeyFlush flushes the Valkey database to disk
+// Uses SAVE for synchronous (blocking) save or BGSAVE for background save
+func ValkeyFlush(async bool) error {
+	c := buildClient()
+	if c == nil {
+		return errors.New("valkey client not available")
+	}
+
+	if UseMemCacheClient == 1 {
+		// Memcache protocol doesn't support SAVE/BGSAVE
+		// These are Redis-specific persistence commands
+		TosyslogGen("ValkeyFlush: SAVE/BGSAVE not supported in memcache protocol mode")
+		return fmt.Errorf("ValkeyFlush not supported in memcache protocol mode")
+	}
+
+	var (
+		cmd     valkey.Completed
+		timeout time.Duration
+	)
+
+	if async {
+		// BGSAVE - background save (non-blocking)
+		timeout = 5 * time.Second
+		cmd = c.B().Arbitrary("BGSAVE").Build()
+	} else {
+		// SAVE - synchronous save (blocking, may take time for large datasets)
+		timeout = 60 * time.Second
+		cmd = c.B().Arbitrary("SAVE").Build()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	if err := c.Do(ctx, cmd).Error(); err != nil {
+		if async {
+			return fmt.Errorf("BGSAVE failed: %w", err)
+		}
+		return fmt.Errorf("SAVE failed: %w", err)
+	}
+
+	return nil
+}
+func TosyslogGen(text string) bool {
+	syslogger, err := syslog.New(syslog.LOG_INFO, "redis-client")
+	text = fmt.Sprintf("cnx[%d]: %s", CnxCount, text)
+	if err != nil {
+		return false
+	}
+	_ = syslogger.Notice(text)
+	_ = syslogger.Close()
+	return true
 }

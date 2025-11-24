@@ -5,6 +5,7 @@ import (
 	"SuriStructs"
 	"Update/IPSets"
 	"Update/Otx"
+	"Update/UpdateLog"
 	"apostgres"
 	"bufio"
 	"compressor"
@@ -88,14 +89,17 @@ func Update() error {
 	uri := fmt.Sprintf("https://rules.emergingthreatspro.com/open/suricata-%v/emerging.rules.tar.gz.md5", SuricataVersion)
 	if !httpclient.DownloadFile(uri, targetpath) {
 		notifs.BuildProgress(110, "{failed} {downloading} emerging.rules.tar.gz.md5", ProgressF)
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: emerging.rules.tar.gz.md5"), futils.GetCalleRuntime())
 		return fmt.Errorf("downloading failed")
 	}
 	data := strings.Split(futils.FileGetContents(targetpath), "\n")
 	if len(data) > 3 {
 		notifs.BuildProgress(110, "{failed} {downloading} Corrupted emerging.rules.tar.gz.md5", ProgressF)
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: emerging.rules.tar.gz.md5"), futils.GetCalleRuntime())
 		return fmt.Errorf("downloading failed")
 	}
 	if len(data) == 0 {
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: emerging.rules.tar.gz.md5"), futils.GetCalleRuntime())
 		notifs.BuildProgress(110, "{failed} {downloading} NULL emerging.rules.tar.gz.md5", ProgressF)
 		return fmt.Errorf("downloading failed")
 	}
@@ -104,6 +108,7 @@ func Update() error {
 	uri = fmt.Sprintf("https://rules.emergingthreatspro.com/open/suricata-%v/version.txt", SuricataVersion)
 	targetpath = fmt.Sprintf("%v/version.txt", tmpdir)
 	if !httpclient.DownloadFile(uri, targetpath) {
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: version.txt"), futils.GetCalleRuntime())
 		notifs.BuildProgress(110, "{failed} {downloading} version.txt", ProgressF)
 		return fmt.Errorf("downloading failed")
 	}
@@ -115,11 +120,13 @@ func Update() error {
 	targetpath = fmt.Sprintf("%v/emerging.rules.tar.gz", tmpdir)
 	if !httpclient.DownloadFile(uri, targetpath) {
 		notifs.BuildProgress(110, "{failed} emerging.rules.tar.gz", ProgressF)
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: emerging.rules.tar.gz"), futils.GetCalleRuntime())
 		return fmt.Errorf("downloading failed")
 	}
 	FileMD5 := futils.MD5File(targetpath)
 	if FileMD5 != NewEmergingRulesMD5 {
 		notifs.BuildProgress(110, "{failed} emerging.rules.tar.gz {corrupted}", ProgressF)
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: corrupted emerging.rules.tar.gz"), futils.GetCalleRuntime())
 		notifs.SquidAdminMysql(0, "[IDS]: Corrupted emerging.rules.tar.gz file", fmt.Sprintf("%v is not %v", FileMD5, NewEmergingRulesMD5), futils.GetCalleRuntime(), 73)
 		return fmt.Errorf("corrupted emerging.rules.tar.gz")
 	}
@@ -127,11 +134,13 @@ func Update() error {
 	notifs.BuildProgress(35, "{extracting} emerging.rules.tar.gz", ProgressF)
 	err := compressor.UntarTgz(targetpath, "/etc/suricata")
 	if err != nil {
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: extracting emerging.rules.tar.gz"), futils.GetCalleRuntime())
 		notifs.BuildProgress(110, "{failed} unable to untar "+err.Error(), ProgressF)
 		futils.DeleteFile(targetpath)
 		return err
 	}
 	futils.DeleteFile(targetpath)
+	UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Emerging Rules %v", NextVersion), futils.GetCalleRuntime())
 	sockets.SET_INFO_STR("CurrentEmergingRulesMD5", NewEmergingRulesMD5)
 	sockets.SET_INFO_STR("CurrentEmergingRulesVersion", NextVersion)
 
@@ -224,36 +233,56 @@ func AbuseCh(only bool) error {
 		"/etc/suricata/rules/ja3_fingerprints.rules", "ja3_fingerprints.rules"); err != nil {
 		return err
 	} else if result {
+		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Abuse.CH: ja3_fingerprints.rules"), futils.GetCalleRuntime())
 		finalResults = true
 	}
 
 	// SSL IP Blacklist
 	if result, err := checkAndDownloadRules("https://sslbl.abuse.ch/blacklist/sslipblacklist.rules",
 		"/etc/suricata/rules/sslipblacklist.rules", "sslipblacklist.rules"); err != nil {
+		if finalResults {
+			UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: Abuse.CH: sslipblacklist.rules %v", err.Error()), futils.GetCalleRuntime())
+			_ = buildFinal()
+		}
 		return err
 	} else if result {
+		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Abuse.CH: sslipblacklist.rules"), futils.GetCalleRuntime())
+		if finalResults {
+			UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: Abuse.CH: sslipblacklist.rules %v", err.Error()), futils.GetCalleRuntime())
+			_ = buildFinal()
+		}
 		finalResults = true
 	}
 
 	// SSL Blacklist
 	if result, err := checkAndDownloadRules("https://sslbl.abuse.ch/blacklist/sslblacklist.rules",
 		"/etc/suricata/rules/sslblacklist.rules", "sslblacklist.rules"); err != nil {
+		if finalResults {
+			UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: Abuse.CH: sslblacklist.rules %v", err.Error()), futils.GetCalleRuntime())
+			_ = buildFinal()
+		}
 		return err
 	} else if result {
+		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Abuse.CH: sslblacklist.rules"), futils.GetCalleRuntime())
 		finalResults = true
 	}
 
 	// Emerging Threats Drop Rules
 	if result, err := checkAndDownloadRules("http://rules.emergingthreats.net/blockrules/emerging-drop.suricata.rules",
 		"/etc/suricata/rules/emerging-drop.suricata.rules", "emerging-drop.suricata.rules"); err != nil {
+		if finalResults {
+			UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: emerging-drop.suricata.rules %v", err.Error()), futils.GetCalleRuntime())
+			_ = buildFinal()
+		}
 		return err
 	} else if result {
+		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: emerging-drop.suricata.rules"), futils.GetCalleRuntime())
 		finalResults = true
 	}
 
 	// Optionally trigger buildfinal if rules were updated
 	if only && finalResults {
-		buildFinal()
+		_ = buildFinal()
 	}
 
 	return nil
@@ -274,7 +303,10 @@ func buildFinal() error {
 	if err != nil {
 		return fmt.Errorf("failed to create shell script: %v", err)
 	}
-	defer shellScriptFile.Close()
+	defer func(shellScriptFile *os.File) {
+		_ = shellScriptFile.Close()
+	}(shellScriptFile)
+
 	writer := bufio.NewWriter(shellScriptFile)
 	_, _ = writer.WriteString("#!/bin/sh\n")
 

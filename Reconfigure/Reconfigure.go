@@ -72,6 +72,20 @@ func ReconfigureAndRestart() {
 	}
 	SuricataTools.RestartSimple()
 }
+func BuildAdminRules() {
+	outPath := "/etc/suricata/rules/Admin.rules"
+	Md51 := futils.MD5File(outPath)
+	notifs.BuildProgress(30, "{building}", "dumpacls.progress")
+	SuriConf.DumpACLs()
+	notifs.BuildProgress(80, "{checking}", "dumpacls.progress")
+	md52 := futils.MD5File(outPath)
+	if Md51 == md52 {
+		return
+	}
+	notifs.BuildProgress(95, "{reloading}", "dumpacls.progress")
+	SuricataTools.Reload()
+	notifs.BuildProgress(100, "{success}", "dumpacls.progress")
+}
 
 func BuildRules() {
 

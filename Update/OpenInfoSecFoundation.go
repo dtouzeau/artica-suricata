@@ -2,6 +2,7 @@ package Update
 
 import (
 	"Reconfigure"
+	"Update/UpdateLog"
 	"compressor"
 	"fmt"
 	"futils"
@@ -72,7 +73,8 @@ func OpenInfoSecFoundation() error {
 	RecommendedVersion := config.Versions.Suricata.Recommended
 	if RecommendedVersion != SuricataVersion {
 		log.Warn().Msgf("%v Recommended version:%v !=%v", futils.GetCalleRuntime(), RecommendedVersion, SuricataVersion)
-		notifs.SquidAdminMysql(1, fmt.Sprintf("Update downloads recommended v%v but current verison is %v ( please upgrade )", RecommendedVersion, SuricataVersion), "", futils.GetCalleRuntime(), 69)
+		notifs.SquidAdminMysql(1, fmt.Sprintf("Update downloads recommended v%v but current version is %v ( please upgrade )", RecommendedVersion, SuricataVersion), "", futils.GetCalleRuntime(), 69)
+		UpdateLog.UpdateEvent(fmt.Sprintf("Update downloads recommended v%v but current version is %v ( please upgrade )", RecommendedVersion, SuricataVersion), futils.GetCalleRuntime())
 		return fmt.Errorf("incompatible version")
 	}
 	UPDATED := false
@@ -90,6 +92,7 @@ func OpenInfoSecFoundation() error {
 
 		err, heads := httpclient.GetHeaders(source.URL, pp)
 		if err != nil {
+			UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: fetching headers from %v: %v", key, err), futils.GetCalleRuntime())
 			log.Error().Msgf("%v Error fetching headers from %v: %v", futils.GetCalleRuntime(), key, err)
 			continue
 		}
@@ -112,6 +115,7 @@ func OpenInfoSecFoundation() error {
 		FinalFile := fmt.Sprintf("%v/%v", "/etc/suricata/rules", BaseNameFile)
 
 		if !httpclient.DownloadFile(source.URL, TargetFile) {
+			UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: downloading %v", BaseNameFile), futils.GetCalleRuntime())
 			log.Error().Msgf("%v Error downloading %v", futils.GetCalleRuntime(), BaseNameFile)
 			continue
 		}
@@ -135,6 +139,7 @@ func OpenInfoSecFoundation() error {
 			UPDATED = true
 			_ = futils.CopyFile(TargetFile, FinalFile)
 			sockets.SET_INFO_STR(SourceKey, Md5String)
+			UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS:  update IDS rules %v", BaseNameFile), futils.GetCalleRuntime())
 			log.Info().Msgf("%v Success update IDS rules %v", futils.GetCalleRuntime(), BaseNameFile)
 			continue
 		}
@@ -151,6 +156,7 @@ func OpenInfoSecFoundation() error {
 			err := compressor.UntarTgz(TargetFile, TempDir)
 			if err != nil {
 				futils.DeleteFile(TargetFile)
+				UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: Untaring tar.gz: %v", BaseNameFile), futils.GetCalleRuntime())
 				log.Error().Msgf("%v Error untaring tar.gz: %v", futils.GetCalleRuntime(), err)
 				continue
 			}
@@ -182,16 +188,16 @@ func OpenInfoSecFoundation() error {
 		}
 		UpdatedCount++
 		_ = futils.CopyFile(SourceFile, DestFile)
-		log.Info().Msgf("%v Success update IDS rules %v", futils.GetCalleRuntime(), file)
+		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Update IDS rules %v", file), futils.GetCalleRuntime())
 		UPDATED = true
 	}
 
 	if UPDATED {
+		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS:updated %d files signatures", UpdatedCount), futils.GetCalleRuntime())
 		notifs.SquidAdminMysql(1, fmt.Sprintf("{success} updated %d files signatures", UpdatedCount), "", futils.GetCalleRuntime(), 178)
 		_ = surirules.ImportSuricataRulesToSQLite()
 		surirules.Classifications()
 		Reconfigure.BuildRules()
 	}
-
 	return nil
 }

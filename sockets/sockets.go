@@ -36,13 +36,11 @@ func DeleteTemp(key string) {
 	c := NeMemCache()
 	c.Delete(key)
 	RemoveCache(key)
-	DELETE_KEY(key)
 	if !strings.HasPrefix(key, "SET:") {
 		keyToFind := fmt.Sprintf("SET:%v", key)
 		c := NeMemCache()
 		c.Delete(keyToFind)
 		RemoveCache(keyToFind)
-
 	}
 
 }
@@ -172,10 +170,12 @@ func SET_INFO_INT(key string, svalue int64) bool {
 	}
 	tfile := fmt.Sprintf("/etc/artica-postfix/settings/Daemons/%s", key)
 	_ = filePutContents(tfile, svalueStr)
+
 	return true
 }
 func DELETE_KEY(key string) {
 	keyToFind := fmt.Sprintf("SET:%v", key)
+	keyToFind = strings.ReplaceAll(keyToFind, "SET:SET:", "")
 	DelKey(keyToFind)
 	tfile := fmt.Sprintf("/etc/artica-postfix/settings/Daemons/%s", key)
 	_ = os.Remove(tfile)
@@ -234,7 +234,7 @@ func SET_INFO_STR(key string, svalue string) bool {
 	}
 
 	createDir(TDir)
-	chmod(TDir, 0755)
+	chmod(TDir, 0o755)
 	chownFolder(TDir, "www-data", "www-data")
 	_ = filePutContents(tfile, svalue)
 	chownFile(tfile, "www-data", "www-data")
@@ -245,11 +245,9 @@ func ListAllKeys() {
 	ValkeyListAllKeys()
 
 }
-
 func resetallKeys() error {
 	return ValkeyResetallKeys(ctx)
 }
-
 func resetRedisKeys() error {
 	return ValkeyResetallKeys(ctx)
 }
@@ -262,7 +260,7 @@ func memcacheGet(key string) (error, string) {
 	err, sitem := ValkeyGetValue(key)
 
 	if err != nil {
-		log.Error().Msgf("%v Error getting key: %v %v", getCalleRuntime(), key, err)
+		log.Debug().Msgf("%v Error getting key: %v %v", getCalleRuntime(), key, err)
 		return err, ""
 	}
 	return nil, sitem
@@ -312,11 +310,20 @@ func SaveFreeKey(Key, value string, ExpireMins int) {
 	_ = ValkeySetValue(Key, value, FinalExpire)
 }
 func RemoveCache(key string) {
-	ValkeyDelKey(key)
+	err := ValkeyDelKey(key)
+	if err != nil {
+		if strings.Contains(err.Error(), "cache miss") {
+			return
+		}
+		log.Error().Msgf("%v Error deleting key: %v", getCalleRuntime(), err)
+	}
 }
 func SetCache(key, value string) bool {
 	err := ValkeySetValue(key, value, expiration)
 	if err != nil {
+		if strings.Contains(err.Error(), "client not available") {
+			return false
+		}
 		log.Error().Msgf("%v %v", getCalleRuntime(), err.Error())
 		return false
 	}
@@ -349,7 +356,7 @@ func GetCache(key string) (error, string) {
 
 	err, sitem := ValkeyGetValue(key)
 	if err != nil {
-		log.Error().Msgf("%v Error getting key: %v %v", getCalleRuntime(), key, err)
+		log.Debug().Msgf("%v Error getting key: %v %v", getCalleRuntime(), key, err)
 		return err, ""
 	}
 	sitem = strings.TrimSpace(sitem)
@@ -379,6 +386,9 @@ func memcacheSet(skey string, svalue string) bool {
 	}
 	err := ValkeySetValue(skey, svalue, expiration)
 	if err != nil {
+		if !strings.Contains(err.Error(), "client not available") {
+			return false
+		}
 		log.Error().Msgf("%v Error setting key: %v", getCalleRuntime(), err)
 		return false
 	}
@@ -398,7 +408,7 @@ func filePutContents(filename string, data string) error {
 func createDir(directoryPath string) {
 	_, err := os.Stat(directoryPath)
 	if os.IsNotExist(err) {
-		err := os.MkdirAll(directoryPath, 0755)
+		err := os.MkdirAll(directoryPath, 0o755)
 		if err != nil {
 			return
 		}
@@ -419,7 +429,7 @@ func chownFolder(folder string, username string, group string) {
 	if !isDirDirectory(folder) {
 		return
 	}
-	chmod(folder, 0755)
+	chmod(folder, 0o755)
 	u, err := user.Lookup(username)
 	if err != nil {
 		return
@@ -441,7 +451,7 @@ func chownFile(FilePath string, username string, group string) {
 	if !fileExists(FilePath) {
 		return
 	}
-	chmod(FilePath, 0755)
+	chmod(FilePath, 0o755)
 	u, err := user.Lookup(username)
 	if err != nil {
 		return

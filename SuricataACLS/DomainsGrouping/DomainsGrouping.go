@@ -69,6 +69,32 @@ func GetAcls(proto string, pattern string) string {
 	}
 	return strings.TrimSpace(strings.Join(f, " "))
 }
+func BuiliTypes(itypes []string) string {
+
+	var negFirst []string
+	var posFirst []string
+	var finalRule []string
+
+	for _, ztype := range itypes {
+		if strings.HasPrefix(ztype, "!") {
+			negFirst = append(negFirst, fmt.Sprintf("itype:%v;", ztype))
+			continue
+		}
+		posFirst = append(posFirst, fmt.Sprintf("itype:%v;", ztype))
+	}
+	if len(negFirst) > 0 {
+		for _, ztype := range negFirst {
+			finalRule = append(finalRule, ztype)
+		}
+	}
+	if len(posFirst) > 0 {
+		for _, ztype := range posFirst {
+			finalRule = append(finalRule, ztype)
+		}
+	}
+	return strings.Join(finalRule, " ")
+}
+
 func BuildGeoIP(Countries []string, GroupType string) string {
 	// find negation first, if there is entries in negation then all will be negated
 	Negation := false

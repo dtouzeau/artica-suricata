@@ -2,6 +2,7 @@ package Otx
 
 import (
 	"SuriStructs"
+	"Update/UpdateLog"
 	"bufio"
 	"fmt"
 	"futils"
@@ -82,16 +83,19 @@ func Run() bool {
 	pps := httpclient.LoadProxySettings()
 	Hclient, err := httpclient.InitClient(pps)
 	if err != nil {
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR:updated %d files signatures", err.Error()), futils.GetCalleRuntime())
 		log.Error().Msgf("%v init client: %v", futils.GetCalleRuntime(), err)
 		return false
 	}
 	if len(opt.ApiKey) < 5 {
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: API key too short"), futils.GetCalleRuntime())
 		log.Error().Msgf("%v API key too short", futils.GetCalleRuntime())
 		return false
 	}
 	// SDK expects the API key via header. The SDK reads it from env var "X_OTX_API_KEY".
 	// Set it here so users can just pass --key like the Python script.
 	if err := os.Setenv("X_OTX_API_KEY", opt.ApiKey); err != nil {
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: X_OTX_API_KEY ev failed %v", opt.ApiKey), futils.GetCalleRuntime())
 		log.Error().Msgf("%v set env: %v", futils.GetCalleRuntime(), err)
 		return false
 	}
@@ -204,14 +208,18 @@ func Run() bool {
 	// Write core iprep support files
 	if !opt.SkipIPRep {
 		if err := os.WriteFile(filepath.Join(opt.DestDir, "categories.txt"), []byte(ipCategoryTemplate), 0o644); err != nil {
+			UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: write categories.txt %v", err), futils.GetCalleRuntime())
 			log.Error().Msgf("%v write categories.txt: %v", futils.GetCalleRuntime(), err)
 		}
 		if err := os.WriteFile(filepath.Join(opt.DestDir, "otx_iprep.rules"), []byte(ipRuleTemplate), 0o644); err != nil {
-			log.Error().Msgf("%v write otx_iprep.rules: %v", err)
+			UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: write otx_iprep.rules %v", err), futils.GetCalleRuntime())
+			log.Error().Msgf("%v write otx_iprep.rules: %v", futils.GetCalleRuntime(), err)
 		}
 
+		UpdateLog.UpdateEvent(fmt.Sprintf("INFO: Wrote related iprep rules to %s", filepath.Join(opt.DestDir, "otx_iprep.rules")), futils.GetCalleRuntime())
 		log.Info().Msgf("%v Wrote related iprep rules to %s", futils.GetCalleRuntime(), filepath.Join(opt.DestDir, "otx_iprep.rules"))
 		if repList != nil {
+			UpdateLog.UpdateEvent(fmt.Sprintf("INFO: Wrote %d IPv4 & IPv6 to %s", ipCount, repList.Name()), futils.GetCalleRuntime())
 			log.Info().Msgf("%v Wrote %d IPv4 & IPv6 to %s", futils.GetCalleRuntime(), ipCount, repList.Name())
 		} else {
 			log.Info().Msgf("No IPs found; otx.list not created.")
@@ -220,6 +228,7 @@ func Run() bool {
 
 	if !opt.SkipFileMD5 {
 		if fileRules != nil {
+			UpdateLog.UpdateEvent(fmt.Sprintf("INFO: Wrote %d rules to %s", md5RuleCount, fileRules.Name()), futils.GetCalleRuntime())
 			log.Info().Msgf("%v Wrote %d md5 hash files to %s", futils.GetCalleRuntime(), md5RuleCount, opt.DestDir)
 			log.Info().Msgf("%v Wrote %d rules to %s", futils.GetCalleRuntime(), md5RuleCount, fileRules.Name())
 		} else {
@@ -256,13 +265,17 @@ func InstallOtx() {
 	files := futils.DirectoryScan(TempDownloadDir)
 	for _, f := range files {
 		if strings.HasPrefix(f, "OTX_") && strings.HasSuffix(f, ".txt") {
-			futils.CopyFile(fmt.Sprintf("%s/%s", TempDownloadDir, f), fmt.Sprintf("/etc/suricata/rules/%s", f))
+			_ = futils.CopyFile(fmt.Sprintf("%s/%s", TempDownloadDir, f), fmt.Sprintf("/etc/suricata/rules/%s", f))
 			futils.DeleteFile(fmt.Sprintf("%s/%s", TempDownloadDir, f))
 		}
 	}
-	futils.CopyFile(otxfile, fmt.Sprintf("/etc/suricata/iprep/otx.list"))
-	futils.CopyFile(otxrule, fmt.Sprintf("/etc/suricata/rules/otx_file_rules.rules"))
-	surirules.ImportSuricataRulesToSQLite()
+	_ = futils.CopyFile(otxfile, fmt.Sprintf("/etc/suricata/iprep/otx.list"))
+	_ = futils.CopyFile(otxrule, fmt.Sprintf("/etc/suricata/rules/otx_file_rules.rules"))
+	UpdateLog.UpdateEvent(fmt.Sprintf("INFO: installing otx_file_rules.rules otx.list"), futils.GetCalleRuntime())
+	err := surirules.ImportSuricataRulesToSQLite()
+	if err != nil {
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: %v", err.Error()), futils.GetCalleRuntime())
+	}
 }
 
 func writeLines(path string, lines []string) error {

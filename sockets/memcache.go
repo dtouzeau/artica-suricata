@@ -52,8 +52,8 @@ func (c *Cache) Set(key string, value any) {
 }
 
 func (c *Cache) Flush() {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
 	c.data = make(map[string]Item)
 }
 

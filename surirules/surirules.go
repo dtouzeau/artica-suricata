@@ -4,6 +4,7 @@ import (
 	"SqliteConns"
 	"SuriStructs"
 	"SuricataACLS"
+	"Update/UpdateLog"
 	"bufio"
 	"database/sql"
 	"fmt"
@@ -93,7 +94,7 @@ func ImportSuricataRulesToSQLite() error {
 		if !strings.HasSuffix(sFile, ".rules") {
 			continue
 		}
-		if sFile == "local.rules" || sFile == "whitelist.rules" || sFile == "iprep.rules" || sFile == "emerging-retired.rules" || sFile == "Production.rules" || sFile == "emerging-deleted.rules" {
+		if sFile == "local.rules" || sFile == "whitelist.rules" || sFile == "Admin.rules" || sFile == "iprep.rules" || sFile == "emerging-retired.rules" || sFile == "Production.rules" || sFile == "emerging-deleted.rules" {
 			continue
 		}
 		ruleFiles = append(ruleFiles, RootPath+"/"+sFile)
@@ -119,7 +120,8 @@ func ImportSuricataRulesToSQLite() error {
 	_, err = db.Exec("DELETE FROM rules WHERE source_file='stamus-lateral.rules'")
 
 	if err != nil {
-		log.Error().Msgf("%v Delete otx_file_rules.rules: %v", futils.GetCalleRuntime(), err)
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: Delete : %v", err.Error()), futils.GetCalleRuntime())
+		log.Error().Msgf("%v Delete : %v", futils.GetCalleRuntime(), err)
 	}
 
 	tx, err := db.Begin()
@@ -191,6 +193,7 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	for sid, enabled := range MemConf {
 		_, err := db.Exec(`UPDATE rules SET enabled=? WHERE sid=?`, enabled, sid)
 		if err != nil {
+			UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: Update sid=%d enabled=%d: %v", sid, enabled, err), futils.GetCalleRuntime())
 			log.Error().Msgf("%v Update sid=%d enabled=%d: %v", futils.GetCalleRuntime(), sid, enabled, err)
 		}
 	}
@@ -254,7 +257,9 @@ func importOneFile(
 	if err != nil {
 		return fmt.Errorf("open: %w", err)
 	}
-	defer f.Close()
+	defer func(f *os.File) {
+		_ = f.Close()
+	}(f)
 
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 0, 128*1024), 10*1024*1024)

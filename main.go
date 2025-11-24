@@ -59,7 +59,7 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-
+	sockets.UseMemCacheClient = futils.StrToInt64(futils.FileGetContents("/etc/artica-postfix/settings/Daemons/UseMemCacheClient"))
 	flag.Parse()
 	if *Getversion {
 		fmt.Println("Version:", version)

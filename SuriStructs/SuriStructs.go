@@ -26,6 +26,10 @@ type HomeNets struct {
 	Negative int `json:"Negative"`
 	Enabled  int `json:"Enabled"`
 }
+type WazuhParams struct {
+	Enabled    int    `json:"Enabled"`
+	UnixSocket string `json:"UnixSocket"`
+}
 
 type SuriDaemon struct {
 	Version                    string              `json:"Version"`
@@ -46,6 +50,7 @@ type SuriDaemon struct {
 	NDPICheckVer               string              `json:"NDPICheckVer"`
 	NDPICheckTime              int64               `json:"NDPICheckTime"`
 	NDPIEnabled                int                 `json:"NDPIEnabled"`
+	Wazuh                      WazuhParams         `json:"Wazuh"`
 }
 
 func LoadConfig() SuriDaemon {
@@ -114,6 +119,9 @@ func LoadConfig() SuriDaemon {
 	}
 	if !f.NDPIOK {
 		f.NDPIEnabled = 0
+	}
+	if len(f.Wazuh.UnixSocket) < 3 {
+		f.Wazuh.UnixSocket = "/var/ossec/queue/sockets/queue"
 	}
 
 	return f
