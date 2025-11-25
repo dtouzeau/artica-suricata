@@ -4,12 +4,13 @@ import (
 	"database/sql"
 	"fmt"
 	"futils"
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/rs/zerolog/log"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode"
+
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/rs/zerolog/log"
 )
 
 type Settings struct {
@@ -68,7 +69,11 @@ func Build(Params Settings) string {
 	}
 	extra := extraPerfs(Params)
 	and = append(and, extra...)
-	return strings.Join(and, " and ")
+	final := strings.Join(and, " and ")
+	if strings.HasPrefix(final, "ip and ") {
+		final = strings.TrimPrefix(final, "ip and ")
+	}
+	return final
 }
 
 func extraPerfs(Params Settings) []string {

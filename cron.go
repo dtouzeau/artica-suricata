@@ -5,6 +5,7 @@ import (
 	"DataShieldIPv4Blocklist"
 	"LogForward"
 	"Maintenance"
+	"SuricataGlobalStats"
 	"Update"
 	"logrotate"
 	"suricata"
@@ -31,6 +32,7 @@ func Each10Minutes() {
 }
 func Each30Minutes() {
 	DataShieldIPv4Blocklist.Run(true)
+	SuricataGlobalStats.Run()
 }
 
 func Each12Hours() {

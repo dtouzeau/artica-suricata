@@ -430,23 +430,39 @@ func StopWithoutPFRing() bool {
 	pid := GetPID()
 
 	if !futils.ProcessExists(pid) {
-		log.Debug().Msgf("%v Already stopped", futils.GetCalleRuntime())
+		log.Warn().Msgf("%v Already stopped", futils.GetCalleRuntime())
 		return true
 	}
-	log.Warn().Msgf("%v kill Pid %d", futils.GetCalleRuntime(), pid)
+	log.Warn().Msgf("%v kill (smooth) Pid %d", futils.GetCalleRuntime(), pid)
 	futils.KillSmoothProcess(pid)
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 20; i++ {
 		time.Sleep(Duration)
 		pid := GetPID()
 		if !futils.ProcessExists(pid) {
 			log.Info().Msgf("%v Stopping.. %vc [SUCCESS]", futils.GetCalleRuntime(), ServiceName)
 			return true
 		}
-		log.Info().Msgf("%v Stopping...%v pid %v %v/5", futils.GetCalleRuntime(), ServiceName, pid, i)
-		futils.StopProcess(pid)
-	}
+		log.Info().Msgf("%v Stopping...%v pid %v %v/20", futils.GetCalleRuntime(), ServiceName, pid, i)
 
+	}
+	pid = GetPID()
+	if !futils.ProcessExists(pid) {
+		log.Info().Msgf("%v Stopping.. %vc [SUCCESS]", futils.GetCalleRuntime(), ServiceName)
+		return true
+	}
+	log.Warn().Msgf("%v kill (hard) Pid %d", futils.GetCalleRuntime(), pid)
+	futils.KillProcess(pid)
+	for i := 0; i < 5; i++ {
+		time.Sleep(Duration)
+		pid := GetPID()
+		if !futils.ProcessExists(pid) {
+			log.Info().Msgf("%v killing.. %vc [SUCCESS]", futils.GetCalleRuntime(), ServiceName)
+			return true
+		}
+		log.Info().Msgf("%v killing...%v pid %v %v/5", futils.GetCalleRuntime(), ServiceName, pid, i)
+		futils.KillProcess(pid)
+	}
 	pid = GetPID()
 
 	if !futils.ProcessExists(pid) {
@@ -460,13 +476,13 @@ func Stop() bool {
 	pid := GetPID()
 
 	if !futils.ProcessExists(pid) {
-		log.Debug().Msgf("%v Already stopped", futils.GetCalleRuntime())
+		log.Warn().Msgf("%v Already stopped", futils.GetCalleRuntime())
 		return PFRing.Unload()
 	}
 	log.Warn().Msgf("%v kill Pid %d", futils.GetCalleRuntime(), pid)
 	futils.KillSmoothProcess(pid)
 
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 20; i++ {
 		time.Sleep(Duration)
 		pid := GetPID()
 		if !futils.ProcessExists(pid) {

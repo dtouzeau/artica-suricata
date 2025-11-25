@@ -183,6 +183,7 @@ func GlobalStatus(ctx *fasthttp.RequestCtx) {
 		Running       bool                   `json:"Running"`
 		Uptime        int64                  `json:"Uptime"`
 		Version       string                 `json:"Version"`
+		PersoRules    bool                   `json:"PersoRules"`
 	}
 	data.Alerts = LogForward.AlertsCount
 	data.Status = true
@@ -196,7 +197,7 @@ func GlobalStatus(ctx *fasthttp.RequestCtx) {
 	} else {
 		data.Running = false
 	}
-
+	data.PersoRules = SuriConf.IsPersoRules()
 	data.Info = SuriStructs.LoadConfig()
 	data.NDPI = data.Info.NDPIOK
 	data.Events = LogForward.ReceivedEvents

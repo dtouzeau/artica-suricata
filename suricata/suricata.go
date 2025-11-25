@@ -8,6 +8,7 @@ import (
 	"SuriConf"
 	"SuriStructs"
 	"SuriTables"
+	"SuricataGlobalStats"
 	"SuricataService"
 	"Update"
 	"apostgres"
@@ -113,7 +114,9 @@ func CheckStartup() {
 	err := Start()
 	if err != nil {
 		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		return
 	}
+	go SuricataGlobalStats.Run()
 }
 func CreateMonitService() {
 	var f []string

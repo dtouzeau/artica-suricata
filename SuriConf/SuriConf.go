@@ -8,6 +8,7 @@ import (
 	"SqliteConns"
 	"SuriStructs"
 	"SuricataACLS"
+	"SuricataGlobalStats"
 	"apostgres"
 	"bufio"
 	"bytes"
@@ -17,6 +18,9 @@ import (
 	"database/sql"
 	"fmt"
 	"futils"
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/rs/zerolog/log"
+	"gopkg.in/yaml.v3"
 	"ipclass"
 	"logsink"
 	"notifs"
@@ -29,13 +33,15 @@ import (
 	"suricata/SuricataTools"
 	"syscall"
 	"time"
-
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/rs/zerolog/log"
 )
 
 const LockFile = "/etc/suricata/suricata.lock"
 const DumpRulesPF = "dumprules.progress"
+const SuricataConfFile = "/etc/suricata/suricata.yaml"
+
+type SuricataConfigYAML struct {
+	RuleFiles []string `yaml:"rule-files"`
+}
 
 var ClassificationsRegex = regexp.MustCompile(`^config classification:\s+(.+?),(.+?),([0-9]+)`)
 
@@ -89,7 +95,7 @@ func Build(BuildRules bool) error {
 	notifs.BuildProgress(55, "{reconfiguring}", "suricata.reconfigure.progress")
 	if len(PfRingSo) < 3 {
 		log.Error().Msgf("%v pfring.so not found: [%v]", futils.GetCalleRuntime(), PfRingSo)
-		futils.DeleteFile("/etc/suricata/suricata.yaml")
+		futils.DeleteFile(SuricataConfFile)
 		return fmt.Errorf("pfring.so not found: [%v]", PfRingSo)
 	}
 	log.Info().Msgf("%v pfring.so path=[%v]", futils.GetCalleRuntime(), PfRingSo)
@@ -669,7 +675,7 @@ func Build(BuildRules bool) error {
 	log.Debug().Msgf("%v Buildsyslog", futils.GetCalleRuntime())
 	Buildsyslog()
 	LogForward.ReloadConfig()
-	SourcesFiles := []string{"/etc/suricata/suricata.yaml",
+	SourcesFiles := []string{SuricataConfFile,
 		"/etc/suricata/threshold.config"}
 	var md51 string
 	var md52 string
@@ -683,14 +689,14 @@ func Build(BuildRules bool) error {
 	if md51 == md52 {
 		return nil
 	}
-	notifs.BuildProgress(75, "{reconfiguring} {checking}", "suricata.reconfigure.progress")
+	notifs.BuildProgress(75, "{reconfiguring} {pw_it_should_take_time}", "suricata.reconfigure.progress")
 	log.Debug().Msgf("%v CheckConfig", futils.GetCalleRuntime())
 	err := CheckConfig(tmpfile)
 	if err != nil {
 		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
 		return err
 	}
-	_ = futils.FilePutContents("/etc/suricata/suricata.yaml", strings.Join(f, "\n"))
+	_ = futils.FilePutContents(SuricataConfFile, strings.Join(f, "\n"))
 
 	futils.DeleteFile(tmpfile)
 	_ = futils.CopyFile("/etc/suricata/threshold.temp.config", "/etc/suricata/threshold.config")
@@ -919,6 +925,11 @@ func PatchTables() {
 	defer func(db *sql.DB) {
 		_ = db.Close()
 	}(db)
+
+	err = SuricataGlobalStats.CreateSchema(db)
+	if err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+	}
 
 	_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricata_rules_packages ( rulefile TEXT NOT NULL PRIMARY KEY , category TEXT NOT NULL, enabled INTEGER DEFAULT 0)`)
 	if err != nil {
@@ -1339,4 +1350,24 @@ func Buildsyslog() {
 func Buildlocalsyslogfile(tfile string) string {
 	futils.CreateDir(filepath.Dir(tfile))
 	return fmt.Sprintf("\taction(type=\"omfile\" dirCreateMode=\"0700\" FileCreateMode=\"0755\" File=\"%v\" ioBufferSize=\"128k\" flushOnTXEnd=\"off\" asyncWriting=\"on\")", tfile)
+}
+func IsPersoRules() bool {
+	data, err := os.ReadFile(SuricataConfFile)
+	if err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		return false
+	}
+
+	var cfg SuricataConfigYAML
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		log.Error().Msgf("%v unmarshal yaml %v", futils.GetCalleRuntime(), err.Error())
+		return false
+	}
+
+	for _, f := range cfg.RuleFiles {
+		if f == "Admin.rules" {
+			return true
+		}
+	}
+	return false
 }

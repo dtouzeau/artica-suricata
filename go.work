@@ -51,6 +51,9 @@ use (
 	CheckMem
 	LogForward/WazuhForwarder
 	LogForward/LogStruct
+	LogForward/FileBeatForwarder
 	Update/UpdateLog
+	SuricataGlobalStats
+	
 
 )

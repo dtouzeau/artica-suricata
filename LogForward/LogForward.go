@@ -160,23 +160,48 @@ func LogAllEventsAndClear(clear bool) {
 }
 func injectToDB(db *sql.DB, m *LogStruct.EveEvent) bool {
 
-	sTime := futils.TimeStampToDateStr(futils.StrToInt64(m.Timestamp))
-
-	if !ipclass.IsIPAddress(m.DstIP) {
-		m.DstIP = "0.0.0.0"
+	// Parse RFC3339 timestamp from Suricata EVE JSON
+	var sTime string
+	if len(m.Timestamp) > 0 {
+		// Try to parse RFC3339 format (e.g., "2025-11-24T19:30:16.123456+0100")
+		t, err := time.Parse(time.RFC3339Nano, m.Timestamp)
+		if err != nil {
+			// Fallback: try RFC3339 without nanoseconds
+			t, err = time.Parse(time.RFC3339, m.Timestamp)
+			if err != nil {
+				log.Warn().Msgf("%v Failed to parse timestamp '%s': %v (using current time)", futils.GetCalleRuntime(), m.Timestamp, err)
+				sTime = time.Now().Format("2006-01-02 15:04:05")
+			} else {
+				sTime = t.Format("2006-01-02 15:04:05")
+			}
+		} else {
+			sTime = t.Format("2006-01-02 15:04:05")
+		}
+	} else {
+		sTime = time.Now().Format("2006-01-02 15:04:05")
 	}
+
+	// Handle both dest_ip and dst_ip (Suricata uses dest_ip, but keep backwards compatibility)
+	destIP := m.DestIP
+	if len(destIP) == 0 {
+		destIP = m.DstIP
+	}
+	if !ipclass.IsIPAddress(destIP) {
+		destIP = "0.0.0.0"
+	}
+
 	if m.DstPort == nil {
 		m.DstPort = new(int)
 	}
 
-	_, err := db.Exec(`INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES 
+	_, err := db.Exec(`INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES
 		($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
-		sTime, m.SrcIP, m.DstIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
+		sTime, m.SrcIP, destIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
 	if err == nil {
 		return true
 	}
 
-	sqlog := fmt.Sprintf("INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES ('%v','%v','%v','%v','%v','%v','%v','%v','%v') ON CONFLICT DO NOTHING", sTime, m.SrcIP, m.DstIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
+	sqlog := fmt.Sprintf("INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES ('%v','%v','%v','%v','%v','%v','%v','%v','%v') ON CONFLICT DO NOTHING", sTime, m.SrcIP, destIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
 
 	log.Error().Msgf("%v Error inserting into database: %v", futils.GetCalleRuntime(), err)
 	log.Error().Msg(sqlog)
@@ -184,9 +209,9 @@ func injectToDB(db *sql.DB, m *LogStruct.EveEvent) bool {
 
 	if strings.Contains(err.Error(), "does not exist") {
 		SuriTables.Check()
-		_, err = db.Exec(`INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES 
+		_, err = db.Exec(`INSERT INTO suricata_events (zDate,src_ip,dst_ip,proto,dst_port,signature,severity,xcount,proxyname) VALUES
 		($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT DO NOTHING`,
-			sTime, m.SrcIP, m.DstIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
+			sTime, m.SrcIP, destIP, m.Proto, m.DstPort, m.Alert.SignatureID, m.Alert.Severity, m.Count, m.ProxyName)
 		if err == nil {
 			return true
 		}
@@ -283,8 +308,15 @@ func ParseQueueFailed() {
 
 }
 func parseLine(b []byte) (*LogStruct.EveEvent, error) {
+	//log.Info().Msgf("%v [DEBUG] parsing line: %s", futils.GetCalleRuntime(), string(b))
 	var ev LogStruct.EveEvent
 	if err := json.Unmarshal(b, &ev); err != nil {
+		// Log first 300 chars of the problematic JSON for debugging
+		preview := string(b)
+		if len(preview) > 500 {
+			preview = preview[:500] + "..."
+		}
+		log.Error().Msgf("%v JSON unmarshal error: %v | Data preview: [%s]", futils.GetCalleRuntime(), err, preview)
 		return nil, err
 	}
 	return &ev, nil
@@ -294,6 +326,20 @@ func parseLine(b []byte) (*LogStruct.EveEvent, error) {
 func handleEvent(ev *LogStruct.EveEvent) {
 	Count := ev.Count
 	ReceivedEvents++
+
+	// Handle both dest_ip and dst_ip for display
+	destIP := ev.DestIP
+	if len(destIP) == 0 {
+		destIP = ev.DstIP
+	}
+
+	// Enhanced logging for ICMP alerts
+	eventDesc := ev.SrcIP + " -> " + destIP
+	if ev.ICMPType != nil && ev.ICMPCode != nil {
+		eventDesc += fmt.Sprintf(" (ICMP type=%d code=%d)", *ev.ICMPType, *ev.ICMPCode)
+	}
+	log.Info().Msgf("%v event[%v]: %v", futils.GetCalleRuntime(), ev.EventType, eventDesc)
+
 	if ev.EventType != "alert" {
 		if GlobalConfig.EveLogsType[ev.EventType] == 0 {
 			DroppedEvents++
@@ -308,9 +354,16 @@ func handleEvent(ev *LogStruct.EveEvent) {
 	}
 
 	if len(ev.EventType) == 0 {
-		log.Warn().Msgf("%v event type missing: %v", futils.GetCalleRuntime(), err)
+		log.Warn().Msgf("%v event type missing", futils.GetCalleRuntime())
 		return
 	}
+
+	// Validate alert events have Alert field
+	if ev.EventType == "alert" && ev.Alert == nil {
+		log.Warn().Msgf("%v alert event missing alert field: %s -> %s", futils.GetCalleRuntime(), ev.SrcIP, destIP)
+		return
+	}
+
 	if WhazuhFw != nil {
 		if err := WhazuhFw.ProcessEvent(*ev); err != nil {
 			// Log error but don't fail the entire event processing
