@@ -54,6 +54,7 @@ use (
 	LogForward/FileBeatForwarder
 	Update/UpdateLog
 	SuricataGlobalStats
+	ImportExport
 	
 
 )

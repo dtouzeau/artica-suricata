@@ -30,6 +30,10 @@ type WazuhParams struct {
 	Enabled    int    `json:"Enabled"`
 	UnixSocket string `json:"UnixSocket"`
 }
+type FileBeatParams struct {
+	Enabled    int    `json:"Enabled"`
+	UnixSocket string `json:"UnixSocket"`
+}
 
 type SuriDaemon struct {
 	Version                    string              `json:"Version"`
@@ -51,6 +55,7 @@ type SuriDaemon struct {
 	NDPICheckTime              int64               `json:"NDPICheckTime"`
 	NDPIEnabled                int                 `json:"NDPIEnabled"`
 	Wazuh                      WazuhParams         `json:"Wazuh"`
+	Filebeat                   FileBeatParams      `json:"Filebeat"`
 }
 
 func LoadConfig() SuriDaemon {

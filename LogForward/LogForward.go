@@ -1,6 +1,7 @@
 package LogForward
 
 import (
+	"LogForward/FileBeatForwarder"
 	"LogForward/LogStruct"
 	"LogForward/WazuhForwarder"
 	"SuriStructs"
@@ -33,6 +34,7 @@ var DroppedEvents int64
 var ReceivedEvents int64
 var GlobalConfig SuriStructs.SuriDaemon
 var WhazuhFw *WazuhForwarder.WazuhForwarder
+var FileBeatFw *FileBeatForwarder.FileBeatForwarder
 
 /* =========================
    Configuration (edit here)
@@ -169,7 +171,7 @@ func injectToDB(db *sql.DB, m *LogStruct.EveEvent) bool {
 			// Fallback: try RFC3339 without nanoseconds
 			t, err = time.Parse(time.RFC3339, m.Timestamp)
 			if err != nil {
-				log.Warn().Msgf("%v Failed to parse timestamp '%s': %v (using current time)", futils.GetCalleRuntime(), m.Timestamp, err)
+				//log.Warn().Msgf("%v Failed to parse timestamp '%s': %v (using current time)", futils.GetCalleRuntime(), m.Timestamp, err)
 				sTime = time.Now().Format("2006-01-02 15:04:05")
 			} else {
 				sTime = t.Format("2006-01-02 15:04:05")
@@ -363,13 +365,15 @@ func handleEvent(ev *LogStruct.EveEvent) {
 		log.Warn().Msgf("%v alert event missing alert field: %s -> %s", futils.GetCalleRuntime(), ev.SrcIP, destIP)
 		return
 	}
+	if FileBeatFw != nil {
+		if err := FileBeatFw.ProcessEvent(*ev); err != nil {
+			log.Warn().Msgf("%v FileBeat forwarding failed (event_type=%s): %v", futils.GetCalleRuntime(), ev.EventType, err)
+		}
+	}
 
 	if WhazuhFw != nil {
 		if err := WhazuhFw.ProcessEvent(*ev); err != nil {
-			// Log error but don't fail the entire event processing
-			log.Warn().Msgf("%v Wazuh forwarding failed (event_type=%s): %v",
-				futils.GetCalleRuntime(), ev.EventType, err)
-			// Event will still be processed and stored in database
+			log.Warn().Msgf("%v Wazuh forwarding failed (event_type=%s): %v", futils.GetCalleRuntime(), ev.EventType, err)
 		}
 	}
 
@@ -415,6 +419,23 @@ func Start() {
 		// Initial connection attempt
 		if err := WhazuhFw.Connect(); err != nil {
 			log.Warn().Msgf("%v Initial Wazuh connection failed: %v (will retry on first event)", futils.GetCalleRuntime(), err)
+		}
+	}
+	if GlobalConfig.Filebeat.Enabled == 1 {
+
+		config := &FileBeatForwarder.Config{
+			UnixSocketPath: GlobalConfig.Filebeat.UnixSocket,
+			ReconnectWait:  time.Duration(5) * time.Second,
+			BufferSize:     4096,
+			WriteTimeout:   time.Duration(5) * time.Second,
+			MaxRetries:     3,
+		}
+
+		FileBeatFw = FileBeatForwarder.NewFileBeatForwarder(config)
+
+		// Initial connection attempt
+		if err := FileBeatFw.Connect(); err != nil {
+			log.Warn().Msgf("Initial Filebeat connection failed: %v (will retry on first event)", err)
 		}
 	}
 
@@ -463,9 +484,10 @@ func Start() {
 				a, d, ok, er, c := m.snapshot()
 				log.Info().Msgf("%v metrics: accepted=%d dropped=%d parsed_ok=%d parsed_err=%d active_conns=%d", futils.GetCalleRuntime(), a, d, ok, er, c)
 
-				// Log Wazuh statistics if enabled
-				if WhazuhFw != nil {
-					WhazuhFw.LogStats()
+				if GlobalConfig.Wazuh.Enabled == 1 {
+					if WhazuhFw != nil {
+						WhazuhFw.LogStats()
+					}
 				}
 			}
 		}
@@ -521,6 +543,10 @@ func Start() {
 	if WhazuhFw != nil {
 		WhazuhFw.LogStats() // Final stats
 		WhazuhFw.Disconnect()
+	}
+	if FileBeatFw != nil {
+		FileBeatFw.LogStats()
+		FileBeatFw.Disconnect()
 	}
 
 	time.Sleep(300 * time.Millisecond) // let in-flight scanner writes finish

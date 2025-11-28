@@ -3,6 +3,7 @@ package RESTApi
 import (
 	"CheckMem"
 	"DataShieldIPv4Blocklist"
+	"ImportExport"
 	"LogForward"
 	"PFRing"
 	"PFRingIfaces"
@@ -102,6 +103,49 @@ func BuildAdminRules(ctx *fasthttp.RequestCtx) {
 	go Reconfigure.BuildAdminRules()
 	OutTrue(ctx)
 }
+
+func ImportACL(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	file := futils.UrlDecode(fmt.Sprintf("%v", ctx.UserValue("file")))
+	tfile := fmt.Sprintf("/usr/share/artica-postfix/ressources/conf/upload/%v", file)
+	if !futils.FileExists(tfile) {
+		OutFalse(ctx, "Invalid path "+tfile)
+		return
+	}
+	ImportExport.Import(tfile)
+	OutTrue(ctx)
+}
+
+func ExportACL(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	id := futils.StrToInt64(fmt.Sprintf("%v", ctx.UserValue("id")))
+	if id == 0 {
+		OutFalse(ctx, "INVALID_ID")
+		return
+	}
+	var data struct {
+		Status bool   `json:"Status"`
+		Error  string `json:"Error"`
+		Export string `json:"export"`
+	}
+	rule, err := ImportExport.Export(id)
+	if err != nil {
+		OutFalse(ctx, err.Error())
+		return
+	}
+	data.Status = true
+	data.Export = rule
+	jsonBytes, _ := json.MarshalIndent(data, "", "  ")
+	ctx.Response.Header.Set("Content-Type", "application/json;charset=UTF-8")
+	ctx.SetStatusCode(200)
+	_, _ = fmt.Fprintf(ctx, string(jsonBytes))
+
+}
+
 func GetAdminRulesIndexes(ctx *fasthttp.RequestCtx) {
 	if !RestRestricts(ctx) {
 		return
@@ -402,6 +446,21 @@ func SetWazuhEnable(ctx *fasthttp.RequestCtx) {
 		Gconf.Wazuh.UnixSocket = "/var/ossec/queue/sockets/queue"
 	}
 	log.Warn().Msgf("%v Edit Wazuh integration to %v", futils.GetCalleRuntime(), enabled)
+	SuriStructs.SaveConfig(Gconf)
+	go LogForward.ReloadConfig()
+	OutTrue(ctx)
+}
+func SetFileBeatEnable(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	enabled := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("enabled")))
+	Gconf := SuriStructs.LoadConfig()
+	Gconf.Filebeat.Enabled = enabled
+	if len(Gconf.Filebeat.UnixSocket) < 3 {
+		Gconf.Filebeat.UnixSocket = "/run/filebeat.sock"
+	}
+	log.Warn().Msgf("%v Edit Filebeat integration to %v", futils.GetCalleRuntime(), enabled)
 	SuriStructs.SaveConfig(Gconf)
 	go LogForward.ReloadConfig()
 	OutTrue(ctx)
