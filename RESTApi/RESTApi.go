@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"futils"
+	"httpclient"
 	"ipclass"
 	"os"
 	"sockets"
@@ -442,11 +443,14 @@ func SetWazuhEnable(ctx *fasthttp.RequestCtx) {
 	enabled := futils.StrToInt(fmt.Sprintf("%v", ctx.UserValue("enabled")))
 	Gconf := SuriStructs.LoadConfig()
 	Gconf.Wazuh.Enabled = enabled
-	if len(Gconf.Wazuh.UnixSocket) < 3 {
-		Gconf.Wazuh.UnixSocket = "/var/ossec/queue/sockets/queue"
-	}
 	log.Warn().Msgf("%v Edit Wazuh integration to %v", futils.GetCalleRuntime(), enabled)
 	SuriStructs.SaveConfig(Gconf)
+	go func() {
+		err := httpclient.RestAPIUnix("/wazuh/restart")
+		if err != nil {
+			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		}
+	}()
 	go LogForward.ReloadConfig()
 	OutTrue(ctx)
 }

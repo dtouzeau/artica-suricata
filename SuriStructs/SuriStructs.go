@@ -27,8 +27,7 @@ type HomeNets struct {
 	Enabled  int `json:"Enabled"`
 }
 type WazuhParams struct {
-	Enabled    int    `json:"Enabled"`
-	UnixSocket string `json:"UnixSocket"`
+	Enabled int `json:"Enabled"`
 }
 type FileBeatParams struct {
 	Enabled    int    `json:"Enabled"`
@@ -124,9 +123,6 @@ func LoadConfig() SuriDaemon {
 	}
 	if !f.NDPIOK {
 		f.NDPIEnabled = 0
-	}
-	if len(f.Wazuh.UnixSocket) < 3 {
-		f.Wazuh.UnixSocket = "/var/ossec/queue/sockets/queue"
 	}
 
 	return f

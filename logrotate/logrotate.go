@@ -9,23 +9,21 @@ import (
 	"futils"
 	"notifs"
 	"os"
+	"path/filepath"
 	"sockets"
 	"strings"
 	"suricata"
+	"suricata/SuricataTools"
 	"time"
 
 	"github.com/rs/zerolog/log"
 )
 
-func RotateEveJsonByPeriod() {
-	logFile := "/var/log/suricata/eve.json"
-	if !futils.FileExists(logFile) {
-		return
-	}
+const evePath = "/var/log/suricata/eve.json"
 
-	SquidRotateOnlySchedule := sockets.GET_INFO_INT("SquidRotateOnlySchedule")
-	if SquidRotateOnlySchedule == 1 {
-		log.Debug().Msgf("%v Rotation only by schedule, aborting", futils.GetCalleRuntime())
+func RotateEveJsonByPeriod() {
+
+	if !futils.FileExists(evePath) {
 		return
 	}
 
@@ -34,13 +32,45 @@ func RotateEveJsonByPeriod() {
 		LogsRotateDefaultSizeRotation = 100
 	}
 
-	CurrentSize := futils.FileSizeMB(logFile)
+	CurrentSize := futils.FileSizeMB(evePath)
 	log.Debug().Msgf("%v %dMB <> %dMB", futils.GetCalleRuntime(), CurrentSize, LogsRotateDefaultSizeRotation)
 	if CurrentSize < LogsRotateDefaultSizeRotation {
 		return
 	}
-
+	err := RotateEveJSON()
+	if err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+	}
 }
+func RotateEveJSON() error {
+	const (
+		timeFormat = "20060102-150405"
+	)
+
+	timestamp := time.Now().Format(timeFormat)
+	rotatedName := fmt.Sprintf("eve.json-%s", timestamp)
+	rotatedPath := filepath.Join(filepath.Dir(evePath), rotatedName)
+
+	defer futils.DeleteFile(rotatedPath)
+
+	// Check if eve.json exists
+	if _, err := os.Stat(evePath); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("no eve.json to rotate at %s", evePath)
+		}
+		return fmt.Errorf("stat eve.json: %w", err)
+	}
+
+	// Rename the file (classic logrotate behavior)
+	if err := os.Rename(evePath, rotatedPath); err != nil {
+		return fmt.Errorf("rename %s -> %s: %w", evePath, rotatedPath, err)
+	}
+
+	SuricataTools.Reload()
+
+	return nil
+}
+
 func getAutomountPath() (error, string) {
 
 	SquidRotateAutomountRes := sockets.GET_INFO_STR("SquidRotateAutomountRes")

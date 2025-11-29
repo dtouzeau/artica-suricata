@@ -18,9 +18,6 @@ import (
 	"database/sql"
 	"fmt"
 	"futils"
-	_ "github.com/mattn/go-sqlite3"
-	"github.com/rs/zerolog/log"
-	"gopkg.in/yaml.v3"
 	"ipclass"
 	"logsink"
 	"notifs"
@@ -33,6 +30,10 @@ import (
 	"suricata/SuricataTools"
 	"syscall"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/rs/zerolog/log"
+	"gopkg.in/yaml.v3"
 )
 
 const LockFile = "/etc/suricata/suricata.lock"
@@ -54,6 +55,30 @@ func fixClassificationsFile() {
 	if futils.FileExists("/etc/suricata/classification.config") {
 		futils.CopyFile("/etc/suricata/classification.config", "/etc/suricata/rules/classification.config")
 	}
+}
+
+func BuilLogsTypes() string {
+
+	Gconf := SuriStructs.LoadConfig()
+	var f []string
+	f = append(f, "      types:")
+	f = append(f, fmt.Sprintf("        - %v", "alert"))
+
+	for ztype, value := range Gconf.EveLogsType {
+		if ztype == "alert" {
+			continue
+		}
+		if value == 0 {
+			continue
+		}
+		f = append(f, fmt.Sprintf("        - %v", ztype))
+		f = append(f, "            extended: yes")
+	}
+	f = append(f, `      xff:`)
+	f = append(f, `        enabled: no`)
+	f = append(f, `        mode: extra-data`)
+	f = append(f, `        header: X-Forwarded-For `)
+	return strings.Join(f, "\n")
 }
 
 func Build(BuildRules bool) error {
@@ -120,32 +145,15 @@ func Build(BuildRules bool) error {
 	f = append(f, "      filetype: unix_stream")
 	f = append(f, "      filename: /run/suricata/alerts.sock")
 	f = append(f, "      format: json")
-	f = append(f, "      types:")
-	f = append(f, fmt.Sprintf("        - %v", "alert"))
+	f = append(f, BuilLogsTypes())
 
-	for ztype, value := range Gconf.EveLogsType {
-		if ztype == "alert" {
-			continue
-		}
-		if value == 0 {
-			continue
-		}
-		f = append(f, fmt.Sprintf("        - %v", ztype))
-	}
-	f = append(f, "        - http2:")
-	f = append(f, "            extended: yes")
-	f = append(f, "        - http:")
-	f = append(f, "            extended: yes")
-	f = append(f, "        - tls:")
-	f = append(f, "            extended: yes")
-	f = append(f, "        - files:")
-	f = append(f, "            force-magic: no")
-	f = append(f, "            force-md5: no")
-	f = append(f, ``)
-	f = append(f, `      xff:`)
-	f = append(f, `        enabled: no`)
-	f = append(f, `        mode: extra-data`)
-	f = append(f, `        header: X-Forwarded-For `)
+	f = append(f, "  - eve-log:")
+	f = append(f, "      enabled: yes")
+	f = append(f, "      filetype: regular")
+	f = append(f, "      filename: /var/log/suricata/eve.json")
+	f = append(f, "      format: json")
+	f = append(f, BuilLogsTypes())
+
 	f = append(f, ``)
 	f = append(f, `  - http-log:`)
 	f = append(f, `      enabled: no`)

@@ -3,7 +3,6 @@ package LogForward
 import (
 	"LogForward/FileBeatForwarder"
 	"LogForward/LogStruct"
-	"LogForward/WazuhForwarder"
 	"SuriStructs"
 	"SuriTables"
 	"apostgres"
@@ -33,7 +32,6 @@ import (
 var DroppedEvents int64
 var ReceivedEvents int64
 var GlobalConfig SuriStructs.SuriDaemon
-var WhazuhFw *WazuhForwarder.WazuhForwarder
 var FileBeatFw *FileBeatForwarder.FileBeatForwarder
 
 /* =========================
@@ -371,12 +369,6 @@ func handleEvent(ev *LogStruct.EveEvent) {
 		}
 	}
 
-	if WhazuhFw != nil {
-		if err := WhazuhFw.ProcessEvent(*ev); err != nil {
-			log.Warn().Msgf("%v Wazuh forwarding failed (event_type=%s): %v", futils.GetCalleRuntime(), ev.EventType, err)
-		}
-	}
-
 	eventStore.mu.Lock()
 	ev.Timestamp = futils.TimeStampToString()
 	if _, exists := eventStore.m[h]; exists {
@@ -404,23 +396,6 @@ func Start() {
 		// Optional: return if perms are critical for Suricata to connect
 	}
 
-	if GlobalConfig.Wazuh.Enabled == 1 {
-
-		config := &WazuhForwarder.Config{
-			UnixSocketPath: GlobalConfig.Wazuh.UnixSocket,
-			ReconnectWait:  time.Duration(5) * time.Second,
-			BufferSize:     4096,
-			WriteTimeout:   time.Duration(5) * time.Second,
-			MaxRetries:     3,
-		}
-
-		WhazuhFw = WazuhForwarder.NewWazuhForwarder(config)
-
-		// Initial connection attempt
-		if err := WhazuhFw.Connect(); err != nil {
-			log.Warn().Msgf("%v Initial Wazuh connection failed: %v (will retry on first event)", futils.GetCalleRuntime(), err)
-		}
-	}
 	if GlobalConfig.Filebeat.Enabled == 1 {
 
 		config := &FileBeatForwarder.Config{
@@ -483,12 +458,6 @@ func Start() {
 			case <-t.C:
 				a, d, ok, er, c := m.snapshot()
 				log.Info().Msgf("%v metrics: accepted=%d dropped=%d parsed_ok=%d parsed_err=%d active_conns=%d", futils.GetCalleRuntime(), a, d, ok, er, c)
-
-				if GlobalConfig.Wazuh.Enabled == 1 {
-					if WhazuhFw != nil {
-						WhazuhFw.LogStats()
-					}
-				}
 			}
 		}
 	}()
@@ -539,11 +508,6 @@ func Start() {
 	log.Warn().Msgf("%v shutting down…", futils.GetCalleRuntime())
 	_ = ln.Close()
 
-	// Close Wazuh connection gracefully
-	if WhazuhFw != nil {
-		WhazuhFw.LogStats() // Final stats
-		WhazuhFw.Disconnect()
-	}
 	if FileBeatFw != nil {
 		FileBeatFw.LogStats()
 		FileBeatFw.Disconnect()

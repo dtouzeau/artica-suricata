@@ -49,7 +49,6 @@ use (
 	Maintenance
 	IPEthtool
 	CheckMem
-	LogForward/WazuhForwarder
 	LogForward/LogStruct
 	LogForward/FileBeatForwarder
 	Update/UpdateLog
