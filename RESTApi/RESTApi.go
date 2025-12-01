@@ -22,6 +22,7 @@ import (
 	"sockets"
 	"suricata"
 	"suricata/SuricataTools"
+	"surirules"
 	"surisock"
 	"time"
 
@@ -116,6 +117,32 @@ func ImportACL(ctx *fasthttp.RequestCtx) {
 		return
 	}
 	ImportExport.Import(tfile)
+	OutTrue(ctx)
+}
+func RefreshRulesIndexes(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	go surirules.RefreshPostGreSQLTables()
+	OutTrue(ctx)
+}
+func RefreshRulesCategories(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	go func() {
+		err := surirules.PopulatePostgreSQLCategories()
+		if err != nil {
+			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		}
+	}()
+	OutTrue(ctx)
+}
+func RefreshRulesCategoriesWait(ctx *fasthttp.RequestCtx) {
+	if !RestRestricts(ctx) {
+		return
+	}
+	_ = surirules.PopulatePostgreSQLCategories()
 	OutTrue(ctx)
 }
 

@@ -2,6 +2,7 @@ package Update
 
 import (
 	"DataShieldIPv4Blocklist"
+	"Reconfigure"
 	"SuriStructs"
 	"Update/IPSets"
 	"Update/Otx"
@@ -19,7 +20,6 @@ import (
 	"regexp"
 	"sockets"
 	"strings"
-	"suricata/SuricataTools"
 	"surirules"
 	"sync"
 	"time"
@@ -29,6 +29,7 @@ import (
 
 var zmutex sync.Mutex
 
+const UpdateLockP = "/etc/suricata/AfterUpdate.lock"
 const iprepDir = "/etc/suricata/iprep"
 const ProgressF = "suricata-update.progress"
 const Pidtime = "/etc/artica-postfix/pids/exec.suricata.updates.php.update.time"
@@ -75,7 +76,6 @@ func Run() {
 func Update() error {
 
 	notifs.BuildProgress(20, "{update_now} emerging.rules.tar.gz.md5", ProgressF)
-
 	CurrentEmergingRulesMD5 := sockets.GET_INFO_STR("CurrentEmergingRulesMD5")
 	tmpdir := futils.TEMPDIR()
 	targetpath := fmt.Sprintf("%v/emerging.rules.tar.gz.md5", tmpdir)
@@ -140,7 +140,7 @@ func Update() error {
 		return err
 	}
 	futils.DeleteFile(targetpath)
-	UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Emerging Rules %v", NextVersion), futils.GetCalleRuntime())
+	UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Update Official Emerging Rules version <strong>v.%v</strong>", NextVersion), futils.GetCalleRuntime())
 	sockets.SET_INFO_STR("CurrentEmergingRulesMD5", NewEmergingRulesMD5)
 	sockets.SET_INFO_STR("CurrentEmergingRulesVersion", NextVersion)
 
@@ -211,6 +211,7 @@ func checkAndDownloadRules(url, localFile, infoKey string) (bool, error) {
 	tmpFile := filepath.Join(futils.TEMPDIR(), "tmp_rules")
 
 	if !httpclient.DownloadFile(url, localFile) {
+		UpdateLog.UpdateEvent(fmt.Sprintf("ERROR: Downloading rules %v", url), futils.GetCalleRuntime())
 		return false, fmt.Errorf("%v downloading failed", url)
 	}
 	newMD5 := futils.MD5File(tmpFile)
@@ -288,45 +289,25 @@ func AbuseCh(only bool) error {
 	return nil
 }
 func buildFinal() error {
-
-	tmpDir := futils.TEMPDIR()
-	_ = surirules.ImportSuricataRulesToSQLite()
-
-	err, disabledSignatures := SuricataTools.GetDisabledSignatures()
-	if err != nil {
-		return err
-	}
-
-	// Create the shell script
-	shellScriptPath := filepath.Join(tmpDir, "sidrule-remove.sh")
-	shellScriptFile, err := os.Create(shellScriptPath)
-	if err != nil {
-		return fmt.Errorf("failed to create shell script: %v", err)
-	}
-	defer func(shellScriptFile *os.File) {
-		_ = shellScriptFile.Close()
-	}(shellScriptFile)
-
-	writer := bufio.NewWriter(shellScriptFile)
-	_, _ = writer.WriteString("#!/bin/sh\n")
-
-	for _, sig := range disabledSignatures {
-		fmt.Printf("Disable signature %s\n", sig)
-		_, _ = writer.WriteString(fmt.Sprintf("/usr/share/artica-postfix/bin/sidrule -d %s || true\n", sig))
-	}
-	_, _ = writer.WriteString(fmt.Sprintf("rm -f %s\n", shellScriptPath))
-	_, _ = writer.WriteString("/etc/init.d/suricata reload\n\n")
-	_ = writer.Flush()
-
-	futils.Chmod(shellScriptPath, 0755)
-
-	go func() {
-		_, _ = futils.ExecuteShell(shellScriptPath)
-		futils.DeleteFile(shellScriptPath)
-
-	}()
+	futils.TouchFile(UpdateLockP)
 	return nil
 }
+func ActionToFinal() {
+	if !futils.FileExists(UpdateLockP) {
+		return
+	}
+	TimeF := futils.FileTimeMin(UpdateLockP)
+	if TimeF < 3 {
+		return
+	}
+	futils.DeleteFile(UpdateLockP)
+
+	_ = surirules.ImportSuricataRulesToSQLite()
+	_ = surirules.PopulatePostgreSQLCategories()
+	surirules.Classifications()
+	Reconfigure.BuildRules()
+}
+
 func ipreputationCibadguys() bool {
 	url := "http://cinsscore.com/list/ci-badguys.txt"
 	tempDir := os.TempDir()

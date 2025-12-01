@@ -60,6 +60,12 @@ func Check() {
 			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
 		}
 	}
+	if !tables["suricata_categories"] {
+		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricata_categories (classtype varchar(35),source_file VARCHAR(40),enabled BIGINT NOT NULL DEFAULT 0,available BIGINT NOT NULL DEFAULT 0,PRIMARY KEY (classtype,source_file) )`)
+		if err != nil {
+			log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err.Error())
+		}
+	}
 
 	if !tables["suricata_sig"] {
 		_, err = db.Exec(`CREATE TABLE IF NOT EXISTS suricata_sig (signature BIGINT PRIMARY KEY,description varchar(128),enabled smallint NOT NULL DEFAULT 1,firewall smallint NOT NULL DEFAULT 0,notify smallint NOT NULL DEFAULT 0 )`)

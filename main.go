@@ -48,6 +48,7 @@ var CMDRules = flag.Bool("rules", false, "Get rules infos")
 var CMDPostgreSQL = flag.Bool("postgres", false, "PostgreSQL maintenance")
 var CMDAclsExplains = flag.Bool("acls-explains", false, "Fill explain text for acls")
 var CMDChecksocket = flag.Bool("check-socket", false, "Check the listening socket")
+var CMDSynCats = flag.Bool("sync-categories", false, "Synchronize enabled and available categories")
 
 func main() {
 

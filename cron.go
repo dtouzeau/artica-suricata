@@ -14,6 +14,7 @@ import (
 
 func Each2Minutes() {
 	Update.Run()
+	Update.ActionToFinal()
 }
 func EachMinutes() {
 	Maintenance.CheckSuricataSocket()

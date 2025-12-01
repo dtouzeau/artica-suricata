@@ -1,7 +1,6 @@
 package Update
 
 import (
-	"Reconfigure"
 	"Update/UpdateLog"
 	"compressor"
 	"fmt"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"sockets"
 	"strings"
-	"surirules"
 
 	"github.com/rs/zerolog/log"
 	"gopkg.in/yaml.v3"
@@ -139,7 +137,7 @@ func OpenInfoSecFoundation() error {
 			UPDATED = true
 			_ = futils.CopyFile(TargetFile, FinalFile)
 			sockets.SET_INFO_STR(SourceKey, Md5String)
-			UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS:  update IDS rules %v", BaseNameFile), futils.GetCalleRuntime())
+			UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Update IDS rules family <strong>%v</strong>", BaseNameFile), futils.GetCalleRuntime())
 			log.Info().Msgf("%v Success update IDS rules %v", futils.GetCalleRuntime(), BaseNameFile)
 			continue
 		}
@@ -188,16 +186,14 @@ func OpenInfoSecFoundation() error {
 		}
 		UpdatedCount++
 		_ = futils.CopyFile(SourceFile, DestFile)
-		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Update IDS rules %v", file), futils.GetCalleRuntime())
+		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Update new IDS rules family <strong>%v</strong>", file), futils.GetCalleRuntime())
 		UPDATED = true
 	}
 
 	if UPDATED {
-		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS:updated %d files signatures", UpdatedCount), futils.GetCalleRuntime())
+		UpdateLog.UpdateEvent(fmt.Sprintf("SUCCESS: Updated <strong>%d</strong> files signatures", UpdatedCount), futils.GetCalleRuntime())
 		notifs.SquidAdminMysql(1, fmt.Sprintf("{success} updated %d files signatures", UpdatedCount), "", futils.GetCalleRuntime(), 178)
-		_ = surirules.ImportSuricataRulesToSQLite()
-		surirules.Classifications()
-		Reconfigure.BuildRules()
+		_ = buildFinal()
 	}
 	return nil
 }

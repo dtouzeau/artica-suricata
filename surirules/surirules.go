@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"fmt"
 	"futils"
+	"notifs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -84,6 +85,20 @@ func parseEnableds() map[int]int {
 	return res
 }
 
+// surirules.RefreshPostGreSQLTables
+func RefreshPostGreSQLTables() {
+
+	notifs.BuildProgress(15, "{importing}", "suricata.indexes")
+	err := ImportSuricataRulesToSQLite()
+	if err != nil {
+		log.Error().Msgf("%v %v", futils.GetCalleRuntime(), err)
+		return
+	}
+	notifs.BuildProgress(90, "{exporting}", "suricata.indexes")
+	RulesToPostgres()
+	notifs.BuildProgress(100, "{success}", "suricata.indexes")
+}
+
 func ImportSuricataRulesToSQLite() error {
 	dbPath := "/home/artica/SQLITE/suricata-rules.db"
 	futils.CreateDir("/home/artica/SQLITE")
@@ -94,7 +109,7 @@ func ImportSuricataRulesToSQLite() error {
 		if !strings.HasSuffix(sFile, ".rules") {
 			continue
 		}
-		if sFile == "local.rules" || sFile == "whitelist.rules" || sFile == "Admin.rules" || sFile == "iprep.rules" || sFile == "emerging-retired.rules" || sFile == "Production.rules" || sFile == "emerging-deleted.rules" {
+		if sFile == "local.rules" || sFile == "whitelist.rules" || sFile == "iprep.rules" || sFile == "emerging-retired.rules" || sFile == "Production.rules" || sFile == "emerging-deleted.rules" {
 			continue
 		}
 		ruleFiles = append(ruleFiles, RootPath+"/"+sFile)
@@ -115,6 +130,7 @@ func ImportSuricataRulesToSQLite() error {
 
 	futils.ChownFile(dbPath, "www-data", "www-data")
 	MemConf := parseEnableds()
+	_, err = db.Exec("DELETE FROM rules WHERE source_file='Admin.rules'")
 	_, err = db.Exec("DELETE FROM rules WHERE source_file='otx_file_rules.rules'")
 	_, err = db.Exec("DELETE FROM rules WHERE source_file='threatfox_suricata.rules'")
 	_, err = db.Exec("DELETE FROM rules WHERE source_file='stamus-lateral.rules'")
@@ -179,7 +195,14 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 	}
 	defer insertOptStmt.Close()
 
+	prc := 30
 	for _, path := range ruleFiles {
+		prc = prc + 1
+		if prc > 90 {
+			prc = 90
+		}
+		notifs.BuildProgress(prc, "{importing} "+path, "suricata.indexes")
+
 		log.Debug().Msgf("%v Importing %s", futils.GetCalleRuntime(), path)
 		if err := importOneFile(path, tx, upsertBySidStmt, insertPlainStmt, selectIdBySidStmt, insertOptStmt); err != nil {
 			return fmt.Errorf("%s: %w", path, err)

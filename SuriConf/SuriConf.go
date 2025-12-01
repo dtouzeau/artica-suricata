@@ -1058,7 +1058,8 @@ func dumpEnabledRules(db *sql.DB, outPath string) (written int, err error) {
 	}
 	log.Info().Msgf("%v %d rules to dump", futils.GetCalleRuntime(), Max)
 
-	const q = `SELECT raw FROM rules WHERE enabled = 1 ORDER BY sid;`
+	const q = `SELECT raw,source_file FROM rules WHERE enabled = 1 ORDER BY sid;`
+	// Admin.rules
 	rows, err := db.Query(q)
 	if err != nil {
 		return 0, fmt.Errorf("query rules: %w", err)
@@ -1084,7 +1085,7 @@ func dumpEnabledRules(db *sql.DB, outPath string) (written int, err error) {
 	C := 0
 	oldprc := 0
 	for rows.Next() {
-		var raw string
+		var raw, sourceFile string
 		C++
 
 		prc := int(int(float64(C) / float64(Max) * 100))
@@ -1096,8 +1097,11 @@ func dumpEnabledRules(db *sql.DB, outPath string) (written int, err error) {
 			}
 		}
 
-		if err = rows.Scan(&raw); err != nil {
+		if err = rows.Scan(&raw, &sourceFile); err != nil {
 			return written, fmt.Errorf("scan row: %w", err)
+		}
+		if sourceFile == "Admin.rules" {
+			continue
 		}
 		// Ensure each rule ends with exactly one newline
 		if _, err = w.WriteString(raw); err != nil {

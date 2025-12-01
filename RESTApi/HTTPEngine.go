@@ -100,6 +100,9 @@ func buildRouter() *router.Router {
 	r.GET("/acls/current", logRequest(GetAdminRulesIndexes))
 	r.GET("/acls/export/{id}", logRequest(ExportACL))
 	r.GET("/acls/import/{file}", logRequest(ImportACL))
+	r.GET("/rules/indexes", logRequest(RefreshRulesIndexes))
+	r.GET("/categories/build", logRequest(RefreshRulesCategoriesWait))
+	r.GET("/categories/sync", logRequest(RefreshRulesCategories))
 
 	r.GET("/report/memory", logRequest(RestReportMemory))
 	r.GET("/suricata/install", logRequest(RestSuricataInstall))

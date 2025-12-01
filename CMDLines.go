@@ -24,6 +24,15 @@ func ParseCmdLines() {
 		SuricataACLS.BuildACLs()
 		os.Exit(0)
 	}
+	if *CMDSynCats {
+		err := surirules.PopulatePostgreSQLCategories()
+		if err != nil {
+			fmt.Println("Error:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
 	if *CMDChecksocket {
 		if Maintenance.CheckSuricataSocket() {
 			fmt.Println("OK")
